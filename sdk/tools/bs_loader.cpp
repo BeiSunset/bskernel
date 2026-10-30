@@ -19,7 +19,8 @@ static void usage(const char* program) {
         "       %s --status\n"
         "       %s --touch-v2-test [--slot N] [--x N] [--y N]\n"
         "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n"
-        "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n"
+        "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n
+        "       %s --memcpy-bench SIZE ITERS   (userspace memcpy ceiling)\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
         "--status only checks the existing BS interface; it never loads a module.\n"
@@ -27,7 +28,7 @@ static void usage(const char* program) {
         "Device example:\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader --module /data/local/tmp/bs.ko'\n",
-        program, program, program, program, program, program);
+        program, program, program, program, program, program, program);
 }
 
 static int run_touch_v2_test(int slot, int x, int y) {
@@ -232,6 +233,29 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
     return 0;
 }
 
+static int run_memcpy_bench(size_t size, int iters)
+{
+    if (size == 0 || iters <= 0) {
+        std::fputs("usage: --memcpy-bench SIZE ITERS\n", stderr);
+        return 2;
+    }
+    std::vector<char> src(size);
+    std::vector<char> dst(size);
+    std::memset(src.data(), 0x5a, size);
+    std::memcpy(dst.data(), src.data(), size); /* warm up both buffers */
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < iters; ++i)
+        std::memcpy(dst.data(), src.data(), size);
+    const auto end = std::chrono::steady_clock::now();
+    const double total_us = std::chrono::duration<double, std::micro>(end - start).count();
+    const double per_call_us = total_us / iters;
+    const double mbps = (double(size) * iters) / total_us;
+    std::printf("memcpy bench: size=%zu iters=%d\n", size, iters);
+    std::printf("  per call: %.2f us   throughput: %.1f MB/s   (userspace ceiling)\n",
+                per_call_us, mbps);
+    return 0;
+}
+
 static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
                                int count, int iters)
 {
@@ -316,6 +340,7 @@ int main(int argc, char** argv) {
     bool touch_v2_test = false;
     bool mem_bench = false;
     bool mem_batch_bench = false;
+    bool memcpy_bench = false;
     int touch_slot = 0;
     int touch_x = 320;
     int touch_y = 480;
@@ -355,6 +380,14 @@ int main(int argc, char** argv) {
             bench_size = size_t(std::strtoull(argv[++i], nullptr, 0));
             bench_count = int(std::strtol(argv[++i], nullptr, 0));
             bench_iters = int(std::strtol(argv[++i], nullptr, 0));
+        } else if (option == "--memcpy-bench") {
+            if (i + 2 >= argc) {
+                std::fputs("Missing arguments for --memcpy-bench\n", stderr);
+                return 2;
+            }
+            memcpy_bench = true;
+            bench_size = size_t(std::strtoull(argv[++i], nullptr, 0));
+            bench_iters = int(std::strtol(argv[++i], nullptr, 0));
         } else if (option == "--slot" || option == "--x" || option == "--y") {
             if (++i == argc) {
                 std::fprintf(stderr, "Missing value for %.*s\n", int(option.size()), option.data());
@@ -383,10 +416,13 @@ int main(int argc, char** argv) {
         (touch_v2_test && (module || directory || params_given || status_only || mem_bench)) ||
         (mem_bench && (module || directory || params_given || status_only || touch_v2_test)) ||
         (mem_batch_bench && (module || directory || params_given || status_only || touch_v2_test ||
-                             mem_bench))) {
+                             mem_bench)) ||
+        (memcpy_bench && (module || directory || params_given || status_only ||
+                          touch_v2_test || mem_bench || mem_batch_bench))) {
         std::fputs("Choose one of --module, --dir, --status, --touch-v2-test, --mem-bench or --mem-bench-batch.\n", stderr);
         return 2;
     }
+    if (memcpy_bench) return run_memcpy_bench(bench_size, bench_iters);
     if (mem_batch_bench)
         return run_mem_batch_bench(bench_target, bench_addr, bench_size, bench_count, bench_iters);
     if (mem_bench) return run_mem_bench(bench_target, bench_addr, bench_size, bench_iters);
