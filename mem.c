@@ -1800,6 +1800,122 @@ long mem_read_cache(void __user *arg)
     return 0;
 }
 
+/* Batch read: one syscall resolves the target task/mm and takes
+ * mmap_read_lock() once for up to MEM_BATCH_MAX_SEGS short reads, amortizing
+ * the fixed per-call overhead of MEM_IOC_READ. Per-segment failures are
+ * reported in-band (err/out_len); the ioctl returns 0 once accepted. */
+long mem_read_batch(void __user *arg)
+{
+    struct mem_batch_req req;
+    struct mem_batch_seg *segs;
+    struct task_struct *task;
+    struct mm_struct *mm;
+    uint64_t total_bytes = 0;
+    uint64_t total = 0;
+    size_t segs_size;
+    u32 i;
+    int ret;
+
+    if (copy_from_user(&req, arg, sizeof(req)))
+        return -EFAULT;
+    if (req.pid <= 0 || req.count == 0 || req.count > MEM_BATCH_MAX_SEGS ||
+        req.flags || req.reserved || !req.segs)
+        return -EINVAL;
+
+    segs_size = (size_t)req.count * sizeof(*segs);
+    segs = kmalloc(segs_size, GFP_KERNEL);
+    if (!segs)
+        return -ENOMEM;
+    if (copy_from_user(segs, (char __user *)req.segs, segs_size)) {
+        ret = -EFAULT;
+        goto out_free;
+    }
+
+    for (i = 0; i < req.count; i++) {
+        segs[i].out_len = 0;
+        segs[i].err = 0;
+        if (segs[i].reserved || segs[i].len == 0) {
+            ret = -EINVAL;
+            goto out_free;
+        }
+        total_bytes += segs[i].len;
+        if (total_bytes > MEM_BATCH_MAX_BYTES) {
+            ret = -E2BIG;
+            goto out_free;
+        }
+    }
+
+    task = mem_find_get_task(req.pid);
+    if (!task) {
+        ret = -ESRCH;
+        goto out_free;
+    }
+
+    mm = get_task_mm(task);
+    if (!mm) {
+        put_task_struct(task);
+        ret = -EINVAL;
+        goto out_free;
+    }
+
+    /* Pre-touch every destination before taking mmap_lock: a page fault in
+     * the __copy_to_user() calls below would take the caller mm mmap_lock
+     * again and can deadlock against a pending writer. An unusable buffer is
+     * reported for that segment only; the remaining segments still proceed. */
+    for (i = 0; i < req.count; i++) {
+        size_t off;
+
+        if (!access_ok((char __user *)segs[i].buf, segs[i].len)) {
+            segs[i].err = -EFAULT;
+            continue;
+        }
+        for (off = 0; off < segs[i].len; off += PAGE_SIZE) {
+            if (put_user((char)0, (char __user *)segs[i].buf + off)) {
+                segs[i].err = -EFAULT;
+                break;
+            }
+        }
+    }
+
+    mmap_read_lock(mm);
+    for (i = 0; i < req.count; i++) {
+        ssize_t got;
+
+        if (segs[i].err)
+            continue;
+        got = nc_memrw(mm, (unsigned long)segs[i].addr,
+                       (char __user *)segs[i].buf, segs[i].len, 0);
+        if (got < 0) {
+            segs[i].out_len = 0;
+            segs[i].err = (int32_t)got;
+        } else if ((uint64_t)got == segs[i].len) {
+            segs[i].out_len = segs[i].len;
+        } else {
+            segs[i].out_len = (uint32_t)got;
+            segs[i].err = -EFAULT;
+        }
+        total += segs[i].out_len;
+    }
+    mmap_read_unlock(mm);
+    mmput(mm);
+    put_task_struct(task);
+
+    if (copy_to_user((char __user *)req.segs, segs, segs_size)) {
+        ret = -EFAULT;
+        goto out_free;
+    }
+    req.total = total;
+    if (copy_to_user(arg, &req, sizeof(req))) {
+        ret = -EFAULT;
+        goto out_free;
+    }
+    ret = 0;
+
+out_free:
+    kfree(segs);
+    return ret;
+}
+
 long mem_read_kernel(pid_t pid, uint64_t addr, void *buf, size_t size)
 {
     struct mem_read_ctx ctx;

@@ -50,6 +50,8 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return mem_read(argp);
     case MEM_IOC_READ_CACHE:
         return mem_read_cache(argp);
+    case MEM_IOC_READ_BATCH:
+        return mem_read_batch(argp);
     case MEM_IOC_GET_PID:
         return mem_get_pid(argp);
     case MEM_IOC_GET_PIDS:

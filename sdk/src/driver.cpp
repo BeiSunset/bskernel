@@ -4,6 +4,7 @@
 
 #include <unistd.h>
 #include <sys/syscall.h>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <limits>
@@ -27,6 +28,8 @@ static_assert(offsetof(mem_query_signal_req, out_alt_sp) == 48U);
 static_assert(offsetof(mem_query_mapping_req, out_phys_addr) == 16U);
 static_assert(sizeof(bs_file_io_req) == 304U);
 static_assert(sizeof(bs_sf_groups_req) == 32U);
+static_assert(sizeof(mem_batch_seg) == 32U);
+static_assert(sizeof(mem_batch_req) == 32U);
 
 namespace bs {
     static int g_fd = -1;
@@ -627,6 +630,48 @@ namespace bs {
         req.buf = (uint64_t)buf;
 
         return call_ioctl(g_fd, MEM_IOC_READ_CACHE, (long)&req) == 0;
+    }
+
+    long read_memory_batch(int pid, MemBatchSegment* segments, uint32_t count) {
+        if (g_fd < 0) return -EBADF;
+        if (pid <= 0 || !segments || count == 0 ||
+            count > static_cast<uint32_t>(MEM_BATCH_MAX_SEGS))
+            return -EINVAL;
+
+        uint64_t total = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            const MemBatchSegment& segment = segments[i];
+            if (!segment.out || segment.len == 0) return -EINVAL;
+            if (total + segment.len > MEM_BATCH_MAX_BYTES) return -EINVAL;
+            total += segment.len;
+        }
+
+        std::array<mem_batch_seg, MEM_BATCH_MAX_SEGS> segs{};
+        for (uint32_t i = 0; i < count; ++i) {
+            segs[i].addr = segments[i].addr;
+            segs[i].buf = reinterpret_cast<uint64_t>(segments[i].out);
+            segs[i].len = segments[i].len;
+            segs[i].out_len = 0;
+            segs[i].err = 0;
+            segs[i].reserved = 0;
+        }
+
+        mem_batch_req req{};
+        req.pid = pid;
+        req.count = count;
+        req.segs = reinterpret_cast<uint64_t>(segs.data());
+        req.total = 0;
+        req.flags = 0;
+        req.reserved = 0;
+
+        const long result = call_ioctl(g_fd, MEM_IOC_READ_BATCH, (long)&req);
+        if (result < 0) return result;
+
+        for (uint32_t i = 0; i < count; ++i) {
+            segments[i].out_len = segs[i].out_len;
+            segments[i].err = segs[i].err;
+        }
+        return 0;
     }
 
     bool touch_init() {

@@ -18,7 +18,8 @@ static void usage(const char* program) {
         "Usage: %s [--module FILE | --dir DIRECTORY] [--params STRING]\n"
         "       %s --status\n"
         "       %s --touch-v2-test [--slot N] [--x N] [--y N]\n"
-        "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n"
+        "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n
+        "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
         "--status only checks the existing BS interface; it never loads a module.\n"
@@ -26,7 +27,7 @@ static void usage(const char* program) {
         "Device example:\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader --module /data/local/tmp/bs.ko'\n",
-        program, program, program, program, program);
+        program, program, program, program, program, program);
 }
 
 static int run_touch_v2_test(int slot, int x, int y) {
@@ -226,6 +227,81 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
     return 0;
 }
 
+static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
+                               int count, int iters)
+{
+    if (size == 0 || count < 1 || count > int(MEM_BATCH_MAX_SEGS) || iters <= 0 ||
+        size * size_t(count) > MEM_BATCH_MAX_BYTES) {
+        std::fputs("usage: --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS "
+                   "(COUNT <= 64, SIZE*COUNT <= 4 MiB)\n", stderr);
+        return 2;
+    }
+    const int pid = resolve_bench_pid(target);
+    if (pid <= 0) {
+        std::printf("cannot resolve target '%s'\n", target ? target : "");
+        return 1;
+    }
+    if (!bs::init()) {
+        std::fputs("BS interface is unavailable; load the module first.\n", stderr);
+        return 1;
+    }
+    std::vector<char> buffer(size);
+    size_t bench_size = size;
+    if (addr == 0) {
+        if (!pick_bench_range(pid, size, buffer, addr, bench_size)) {
+            std::printf("no readable block in pid %d can satisfy this request\n", pid);
+            bs::close();
+            return 1;
+        }
+        if (bench_size != size) {
+            std::printf("note: largest verified block is %zu bytes (requested %zu)\n",
+                        bench_size, size);
+            bs::close();
+            return 1;
+        }
+    }
+    std::vector<bs::MemBatchSegment> segments(size_t(count));
+    for (int i = 0; i < count; ++i) {
+        segments[size_t(i)].addr = addr;
+        segments[size_t(i)].out = buffer.data();
+        segments[size_t(i)].len = uint32_t(size);
+    }
+    long result = bs::read_memory_batch(pid, segments.data(), uint32_t(count));
+    if (result != 0) {
+        std::printf("read_memory_batch failed: %ld\n", result);
+        bs::close();
+        return 1;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (segments[size_t(i)].err != 0) {
+            std::printf("segment %d failed: err=%d\n", i, segments[size_t(i)].err);
+            bs::close();
+            return 1;
+        }
+    }
+    const auto start = std::chrono::steady_clock::now();
+    for (int it = 0; it < iters; ++it) {
+        if (bs::read_memory_batch(pid, segments.data(), uint32_t(count)) != 0) {
+            std::printf("read_memory_batch failed at iteration %d\n", it);
+            bs::close();
+            return 1;
+        }
+    }
+    const auto end = std::chrono::steady_clock::now();
+    const double total_us = std::chrono::duration<double, std::micro>(end - start).count();
+    const double per_call_us = total_us / iters;
+    const double per_segment_us = per_call_us / count;
+    const double mbps = (double(size) * double(count) * iters) / total_us;
+    std::printf("mem_read_batch bench: pid=%d addr=%#llx seg=%zu count=%d iters=%d\n",
+                pid, (unsigned long long)addr, size, count, iters);
+    std::printf("  per ioctl: %.2f us   per segment: %.2f us   throughput: %.1f MB/s\n",
+                per_call_us, per_segment_us, mbps);
+    std::printf("  syscalls used: %d (single-read equivalent: %d)\n",
+                iters, iters * count);
+    bs::close();
+    return 0;
+}
+
 int main(int argc, char** argv) {
     const char* module = nullptr;
     const char* directory = nullptr;
@@ -234,6 +310,7 @@ int main(int argc, char** argv) {
     bool params_given = false;
     bool touch_v2_test = false;
     bool mem_bench = false;
+    bool mem_batch_bench = false;
     int touch_slot = 0;
     int touch_x = 320;
     int touch_y = 480;
@@ -241,6 +318,7 @@ int main(int argc, char** argv) {
     uint64_t bench_addr = 0;
     size_t bench_size = 0;
     int bench_iters = 0;
+    int bench_count = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string_view option(argv[i]);
         if (option == "--help" || option == "-h") {
@@ -260,6 +338,17 @@ int main(int argc, char** argv) {
             bench_target = argv[++i];
             bench_addr = std::strtoull(argv[++i], nullptr, 0);
             bench_size = size_t(std::strtoull(argv[++i], nullptr, 0));
+            bench_iters = int(std::strtol(argv[++i], nullptr, 0));
+        } else if (option == "--mem-bench-batch") {
+            if (i + 5 >= argc) {
+                std::fputs("Missing arguments for --mem-bench-batch\n", stderr);
+                return 2;
+            }
+            mem_batch_bench = true;
+            bench_target = argv[++i];
+            bench_addr = std::strtoull(argv[++i], nullptr, 0);
+            bench_size = size_t(std::strtoull(argv[++i], nullptr, 0));
+            bench_count = int(std::strtol(argv[++i], nullptr, 0));
             bench_iters = int(std::strtol(argv[++i], nullptr, 0));
         } else if (option == "--slot" || option == "--x" || option == "--y") {
             if (++i == argc) {
@@ -287,10 +376,14 @@ int main(int argc, char** argv) {
     if ((module && directory) ||
         (status_only && (module || directory || params_given || touch_v2_test || mem_bench)) ||
         (touch_v2_test && (module || directory || params_given || status_only || mem_bench)) ||
-        (mem_bench && (module || directory || params_given || status_only || touch_v2_test))) {
-        std::fputs("Choose one of --module, --dir, --status, --touch-v2-test or --mem-bench.\n", stderr);
+        (mem_bench && (module || directory || params_given || status_only || touch_v2_test)) ||
+        (mem_batch_bench && (module || directory || params_given || status_only || touch_v2_test ||
+                             mem_bench))) {
+        std::fputs("Choose one of --module, --dir, --status, --touch-v2-test, --mem-bench or --mem-bench-batch.\n", stderr);
         return 2;
     }
+    if (mem_batch_bench)
+        return run_mem_batch_bench(bench_target, bench_addr, bench_size, bench_count, bench_iters);
     if (mem_bench) return run_mem_bench(bench_target, bench_addr, bench_size, bench_iters);
     if (touch_v2_test) return run_touch_v2_test(touch_slot, touch_x, touch_y);
 

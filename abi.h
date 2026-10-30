@@ -52,6 +52,9 @@
 #define MEM_IOC_OPEN_PROCESS_MEM _IOWR('D', 36, struct mem_open_process_mem_req)
 /* This command is accepted only by the returned process-memory fd. */
 #define MEM_PROCESS_MEM_IOC_ARM _IOW('D', 37, struct mem_process_mem_arm_req)
+/* One syscall reads many (addr, len) segments of a single target PID. The
+ * existing MEM_IOC_READ command and its encoding are left untouched. */
+#define MEM_IOC_READ_BATCH _IOWR('D', 39, struct mem_batch_req)
 
 #define MEM_PROCESS_MEM_ABI_VERSION 1U
 #define MEM_PROCESS_MEM_IO_MAX 4096U
@@ -250,6 +253,33 @@ struct mem_rw_req {
     uint64_t addr;
     uint64_t size;
     uint64_t buf;   /* userland buffer pointer */
+};
+
+#define MEM_BATCH_MAX_SEGS 64
+#define MEM_BATCH_MAX_BYTES (4u * 1024u * 1024u)
+
+/* One segment of MEM_IOC_READ_BATCH: read len bytes from target VA addr into
+ * the caller buffer buf. out_len/err are written back per segment; a failing
+ * segment does not affect the others. reserved must be 0 on input. */
+struct mem_batch_seg {
+    uint64_t addr;      /* in: target VA */
+    uint64_t buf;       /* in: caller destination */
+    uint32_t len;       /* in: bytes to read */
+    uint32_t out_len;   /* out: bytes read (0 on error) */
+    int32_t  err;       /* out: 0 or negative errno for this segment */
+    uint32_t reserved;  /* in: must be 0 */
+};
+
+/* Read many target segments with one pid/task/mm lookup and one
+ * mmap_read_lock(). The sum of all len values is capped by
+ * MEM_BATCH_MAX_BYTES so the lock hold time stays bounded. */
+struct mem_batch_req {
+    int32_t  pid;       /* in */
+    uint32_t count;     /* in: 1..MEM_BATCH_MAX_SEGS */
+    uint64_t segs;      /* in: struct mem_batch_seg array (in/out) */
+    uint64_t total;     /* out: sum(out_len) */
+    uint32_t flags;     /* in: must be 0 */
+    uint32_t reserved;  /* in: must be 0 */
 };
 
 struct touch_event_req {

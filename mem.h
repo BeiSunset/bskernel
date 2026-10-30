@@ -18,6 +18,7 @@ long mem_get_module_base2(void __user *arg);
 long mem_get_module_path(void __user *arg);
 long mem_read(void __user *arg);
 long mem_read_cache(void __user *arg);
+long mem_read_batch(void __user *arg);
 long mem_query_mapping(void __user *arg);
 long mem_query_access(void __user *arg);
 int mem_query_access_mm(struct mm_struct *mm, unsigned long addr,

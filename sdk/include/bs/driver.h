@@ -106,6 +106,18 @@ namespace bs {
 
     bool read_memory(int pid, uint64_t addr, void* buf, size_t size);
     bool read_memory_cache(int pid, uint64_t addr, void* buf, size_t size);
+
+    struct MemBatchSegment {
+        uint64_t addr = 0;
+        void* out = nullptr;
+        uint32_t len = 0;
+        uint32_t out_len = 0;
+        int32_t err = 0;
+    };
+    /* Reads up to count segments with ONE ioctl. Returns 0 when the request was
+     * processed (inspect per-segment err/out_len), or a negative errno when the
+     * ioctl itself failed (ENOTTY on old modules, EINVAL on bad input). */
+    long read_memory_batch(int pid, MemBatchSegment* segments, uint32_t count);
     // Returns 0 or a negative errno; no content-based/old-module fallback.
     // Output is zeroed on failure. See mem_query_mapping_req for lifetime.
     long query_mapping(int pid, uint64_t addr, mem_query_mapping_req& out);
