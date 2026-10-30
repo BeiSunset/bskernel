@@ -244,16 +244,24 @@ static int run_memcpy_bench(size_t size, int iters)
     std::vector<char> dst(size);
     std::memset(src.data(), 0x5a, size);
     std::memcpy(dst.data(), src.data(), size); /* warm up both buffers */
+    /* Keep the copies observable: without this the -O3 build elides the whole
+     * loop (dst is never read) and the benchmark reports petabytes per second. */
+    unsigned long long sink = 0;
     const auto start = std::chrono::steady_clock::now();
-    for (int i = 0; i < iters; ++i)
+    for (int i = 0; i < iters; ++i) {
         std::memcpy(dst.data(), src.data(), size);
+        __asm__ __volatile__("" : : "r"(dst.data()) : "memory");
+    }
     const auto end = std::chrono::steady_clock::now();
+    for (size_t off = 0; off < size; off += 4096)
+        sink += static_cast<unsigned char>(dst[off]);
     const double total_us = std::chrono::duration<double, std::micro>(end - start).count();
     const double per_call_us = total_us / iters;
     const double mbps = (double(size) * iters) / total_us;
     std::printf("memcpy bench: size=%zu iters=%d\n", size, iters);
     std::printf("  per call: %.2f us   throughput: %.1f MB/s   (userspace ceiling)\n",
                 per_call_us, mbps);
+    std::printf("  checksum: %llu (proof the copies ran)\n", sink);
     return 0;
 }
 
