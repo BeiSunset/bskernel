@@ -1351,17 +1351,6 @@ static ssize_t access_remote_vm_nc(pid_t vpid, unsigned long target, char __user
      * copy_*_user() would take this same mmap_lock again when the target is
      * the caller mm, which can deadlock against a pending writer. Inside the
      * lock nc_memrw() uses only the non-sleeping __copy_*_user() helpers. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
-    if (write)
-        fault_in_readable(buffer, count);
-    else
-        fault_in_writeable(buffer, count);
-#else
-    if (write)
-        fault_in_pages_readable(buffer, count);
-    else
-        fault_in_pages_writeable(buffer, count);
-#endif
 
     mmap_read_lock(mm);
     result = nc_memrw(mm, target, buffer, count, write);
@@ -1396,17 +1385,6 @@ static ssize_t access_remote_vm_nc_cache(pid_t vpid, unsigned long target, char 
     }
 
     /* See access_remote_vm_nc(): pre-fault before taking mmap_lock. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
-    if (write)
-        fault_in_readable(buffer, count);
-    else
-        fault_in_writeable(buffer, count);
-#else
-    if (write)
-        fault_in_pages_readable(buffer, count);
-    else
-        fault_in_pages_writeable(buffer, count);
-#endif
 
     mmap_read_lock(mm);
     result = nc_memrw_cache(mm, target, buffer, count, write);
