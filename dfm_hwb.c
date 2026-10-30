@@ -50,6 +50,7 @@
 
 #include "abi.h"
 #include "dfm_hwb.h"
+#include "compat.h"
 
 #ifndef __nocfi
 #define __nocfi __attribute__((no_sanitize("cfi")))

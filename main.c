@@ -28,6 +28,7 @@
 #include "udp_capture.h"
 #include "file_io.h"
 #include "sf_groups.h"
+#include "compat.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("DFM");
@@ -262,6 +263,12 @@ static int __init mod_init(void)
     int ret;
     int syscall_ret;
     int reboot_ret;
+
+    ret = dfm_compat_init();
+    if (ret < 0) {
+        pr_err("compat init failed: %d\n", ret);
+        return ret;
+    }
 
     ret = mem_core_init();
     if (ret < 0) {

@@ -16,6 +16,7 @@
 
 #include "abi.h"
 #include "sf_groups.h"
+#include "compat.h"
 
 #define DFM_AID_SYSTEM 1000U
 #define DFM_AID_INPUT  1004U

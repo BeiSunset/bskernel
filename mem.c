@@ -30,6 +30,7 @@
 
 #include "abi.h"
 #include "mem.h"
+#include "compat.h"
 
 /* ---- pid / module base ---- */
 

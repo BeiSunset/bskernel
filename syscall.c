@@ -28,6 +28,7 @@
 #include "abi.h"
 #include "install.h"
 #include "syscall.h"
+#include "compat.h"
 
 #ifndef __nocfi
 #define __nocfi

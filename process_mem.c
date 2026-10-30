@@ -30,6 +30,7 @@
 #include "mem.h"
 #include "process_mem.h"
 #include "sf_groups.h"
+#include "compat.h"
 
 #define SENSOR_LIBRARY "/system/lib64/libsensorservice.so"
 #define SENSOR_CAVE_SIZE 64U

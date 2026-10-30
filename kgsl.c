@@ -30,6 +30,7 @@
 
 #include "abi.h"
 #include "kgsl.h"
+#include "compat.h"
 
 /*
  * Read-only KGSL syncsource ID prediction
