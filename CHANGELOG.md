@@ -1,9 +1,10 @@
 # Changelog
 
 All notable changes to this repository are documented here.
-The release workflow reads `BS_MODULE_VERSION` from `bs_module.h`; keep it in
-sync with this file and with `BSLoaderDriver.template.sh`
-(`VERSION` / `CURRENT_VERSION`).
+Releases follow the enkernel scheme: the name is a UTC timestamp
+(`YYYY-MM-DD HH:MM:SS UTC`) and the tag is
+`YYYY-MM-DD-HHMMSS-<run_id>-<attempt>`. `BS_MODULE_VERSION` in `bs_module.h`
+and the loader's `VERSION` / `CURRENT_VERSION` only describe the build.
 
 ## Unreleased
 

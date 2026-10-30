@@ -209,19 +209,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Single source of truth for the version: the module header.
-          # version.txt only ever fed this line and has been removed.
-          version="$(sed -n 's/^#define BS_MODULE_VERSION "\(.*\)"$/\1/p' bs_module.h | head -n1)"
-          test -n "$version"
-          release_name="BSKernel v${version} $(date -u '+%Y-%m-%d %H:%M UTC')"
-          # Include the run and attempt so same-version builds and retries cannot collide.
-          release_tag="v${version}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Release identity matches enkernel: a UTC timestamp in the name and
+          # <date>-<HHMMSS>-<run>-<attempt> as the tag, so every build is
+          # uniquely addressable without any version file.
+          release_name="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          release_tag="$(date -u '+%Y-%m-%d-%H%M%S')-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           release_id="$(
             gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$release_tag" \
               -f target_commitish="$GITHUB_SHA" \
               -f name="$release_name" \
-              -f body="Version: v${version}. Built from ${GITHUB_SHA}. Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
+              -f body="Built from ${GITHUB_SHA}. Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
               -F draft=true \
               --jq '.id'
           )"
