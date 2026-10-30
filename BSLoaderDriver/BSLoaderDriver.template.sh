@@ -10,8 +10,10 @@
 
 VERSION="1.0"
 GITHUB_REPO="BeiSunset/bskernel"
-CURRENT_VERSION="1.0"
-VERSION_URL="${VERSION_URL:-https://sharechain.qq.com/74da7436fcd8f8ed94973b3260c2fbd4?qq_aio_chat_type=3}"
+CURRENT_VERSION="1.0.0"
+VERSION_URL="${VERSION_URL:-https://raw.githubusercontent.com/BeiSunset/bskernel/main/version.txt}"
+VERSION_URL_FALLBACK="${VERSION_URL_FALLBACK:-https://github.com/BeiSunset/bskernel/raw/main/version.txt}"
+VERSION_URL_FALLBACK2="${VERSION_URL_FALLBACK2:-https://cdn.jsdelivr.net/gh/BeiSunset/bskernel@main/version.txt}"
 RELEASE_TAG="2026-10-30-122646-41055081437-1"
 
 # 你的 TG 频道（可选）：例如 TG_URL="https://t.me/xxx"；留空则界面不显示
@@ -247,19 +249,35 @@ check_environment() {
     fi
 }
 
+fetch_version() {
+    _url=$1
+    if have curl; then
+        curl -fsSL --max-time 5 -A 'Mozilla/5.0' "$_url" 2>/dev/null | head -n1
+    elif have wget; then
+        wget -qO- --timeout=5 "$_url" 2>/dev/null | head -n1
+    fi
+}
+
 check_version() {
     remote=""
-    if have curl; then
-        remote=$(curl -fsSL --max-time 5 -A 'Mozilla/5.0' "$VERSION_URL" 2>/dev/null | sed -n 's/.*"html_content":"\([^"]*\)".*/\1/p' | head -n1)
+    remote=$(fetch_version "$VERSION_URL")
+    if [ -z "$remote" ]; then
+        remote=$(fetch_version "$VERSION_URL_FALLBACK")
     fi
-    if [ -z "$remote" ] && have wget; then
-        remote=$(wget -qO- --timeout=5 -U 'Mozilla/5.0' "$VERSION_URL" 2>/dev/null | sed -n 's/.*"html_content":"\([^"]*\)".*/\1/p' | head -n1)
+    if [ -z "$remote" ]; then
+        remote=$(fetch_version "$VERSION_URL_FALLBACK2")
     fi
     if [ -z "$remote" ]; then
         warn "无法连接版本服务器，已跳过版本验证"
         return 0
     fi
     remote=$(printf '%s' "$remote" | tr -d '[:space:]')
+    case "$remote" in
+        *[!0-9.]*|"")
+            warn "版本号格式无效，已跳过版本验证"
+            return 0
+            ;;
+    esac
     if [ "$remote" = "$CURRENT_VERSION" ]; then
         ok "驱动版本验证通过,当前已是最新版本!"
         return 0

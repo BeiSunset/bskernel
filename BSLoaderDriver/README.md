@@ -29,7 +29,7 @@ su -c "sh /sdcard/Download/BSLoaderDriver.sh"
 
 - 释放内置驱动到 `/data/local/tmp/bskernel.<pid>/`；
 - 校验 sha256（`6/6`）；
-- 检查 QQ 分享页里的版本号（`1.0`）；
+- 从仓库 `version.txt` 读取版本号（默认 `1.0.0`，支持 GitHub Raw 和 jsDelivr 回退）；
 - 按菜单选择 KMI 后 `insmod`，默认对 6.6 使用 `bs_stage=6`（跳过会重启的 syscall hook）；
 - 加载成功或失败后立即删除临时目录；启动时也会清理旧的 `/data/local/tmp/bskernel.*` 残留。
 

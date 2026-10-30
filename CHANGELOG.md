@@ -4,6 +4,11 @@ All notable changes to this repository are documented here.
 The release workflow reads `version.txt`; keep it in sync with this file and
 with `BSLoaderDriver.template.sh` (`VERSION` / `CURRENT_VERSION`).
 
+## Unreleased
+
+- Loader version check now reads `version.txt` from the repository
+  (GitHub Raw with jsDelivr fallback) instead of the QQ share page.
+
 ## v1.0.0
 
 ### Added
