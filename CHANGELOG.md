@@ -6,6 +6,7 @@ with `BSLoaderDriver.template.sh` (`VERSION` / `CURRENT_VERSION`).
 
 ## Unreleased
 
+- Loader version check now tries jsDelivr first, then GitHub Raw.
 - Removed the unused docs/ARCHITECTURE.md; architecture notes live with the source.
 
 - Loader version check now reads `version.txt` from the repository

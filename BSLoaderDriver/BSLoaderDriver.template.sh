@@ -11,9 +11,9 @@
 VERSION="1.0"
 GITHUB_REPO="BeiSunset/bskernel"
 CURRENT_VERSION="1.0.0"
-VERSION_URL="${VERSION_URL:-https://raw.githubusercontent.com/BeiSunset/bskernel/main/version.txt}"
-VERSION_URL_FALLBACK="${VERSION_URL_FALLBACK:-https://github.com/BeiSunset/bskernel/raw/main/version.txt}"
-VERSION_URL_FALLBACK2="${VERSION_URL_FALLBACK2:-https://cdn.jsdelivr.net/gh/BeiSunset/bskernel@main/version.txt}"
+VERSION_URL="${VERSION_URL:-https://cdn.jsdelivr.net/gh/BeiSunset/bskernel@main/version.txt}"
+VERSION_URL_FALLBACK="${VERSION_URL_FALLBACK:-https://raw.githubusercontent.com/BeiSunset/bskernel/main/version.txt}"
+VERSION_URL_FALLBACK2="${VERSION_URL_FALLBACK2:-https://github.com/BeiSunset/bskernel/raw/main/version.txt}"
 RELEASE_TAG="2026-10-30-122646-41055081437-1"
 
 # 你的 TG 频道（可选）：例如 TG_URL="https://t.me/xxx"；留空则界面不显示
