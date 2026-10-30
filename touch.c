@@ -7,10 +7,12 @@
 #include <linux/file.h>
 #include <linux/input.h>
 #include <linux/kprobes.h>
+#include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/namei.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
@@ -124,6 +126,22 @@ static struct touch_event_list g_touch_final_events;
  * paths so a stuck hook still shows *why*. Kept under g_touch_lock; a full copy
  * lives in the struct so user copy_to_user reads a coherent view. */
 static struct touch_status g_touch_status;
+
+/* Files whose f_op we replaced with g_touch_proxy_fops. Every entry pins the
+ * struct file with get_file(), so a tracked file can never reach ->release()
+ * nor be freed while it sits on this list; touch_restore_all_files() drops
+ * those references on module exit and puts the original f_op back. The list is
+ * guarded by g_touch_patch_lock, a spinlock because the install side runs from
+ * the __arm64_sys_read kprobe pre_handler, i.e. with interrupts disabled, where
+ * a mutex must not be taken and allocation must use GFP_ATOMIC. */
+struct touch_patched_file {
+    struct list_head node;
+    struct file *file;
+    const struct file_operations *orig_fops;
+};
+
+static LIST_HEAD(g_touch_patched_files);
+static DEFINE_SPINLOCK(g_touch_patch_lock);
 
 static bool touch_test_bit(int bit, const unsigned long *array)
 {
@@ -475,6 +493,9 @@ static int touch_try_patch_file(struct file *file)
     char leader[TASK_COMM_LEN];
     char path_buf[256];
     char *path;
+    struct touch_patched_file *patched;
+    struct touch_patched_file *iter;
+    unsigned long flags;
 
     if (!file || IS_ERR(file))
         return 0;
@@ -552,10 +573,32 @@ static int touch_try_patch_file(struct file *file)
         return 0;
     }
 
-    memcpy(&g_touch_proxy_fops, file->f_op, sizeof(g_touch_proxy_fops));
-    g_touch_orig_read = file->f_op->read;
+    patched = kzalloc(sizeof(*patched), GFP_ATOMIC);
+    if (!patched) {
+        pr_warn_ratelimited("cannot track patched file, skip %s\n", path);
+        return -ENOMEM;
+    }
+
+    patched->file = get_file(file);
+    patched->orig_fops = file->f_op;
+
+    spin_lock_irqsave(&g_touch_patch_lock, flags);
+    list_for_each_entry(iter, &g_touch_patched_files, node) {
+        if (iter->file == file) {
+            spin_unlock_irqrestore(&g_touch_patch_lock, flags);
+            put_file(file);
+            kfree(patched);
+            return 0;
+        }
+    }
+    memcpy(&g_touch_proxy_fops, patched->orig_fops,
+           sizeof(g_touch_proxy_fops));
     g_touch_proxy_fops.read = touch_read_proxy;
+    g_touch_orig_read = patched->orig_fops->read;
     file->f_op = &g_touch_proxy_fops;
+    list_add_tail(&patched->node, &g_touch_patched_files);
+    spin_unlock_irqrestore(&g_touch_patch_lock, flags);
+
     g_touch_input_dev = idev;
     touch_cache_device_caps(idev);
     g_touch_proxy_installed = true;
@@ -701,6 +744,39 @@ void touch_release_all(void)
     mutex_unlock(&g_touch_lock);
 }
 
+/* Restore every file whose f_op we swapped back to its original fops and drop
+ * the reference taken for tracking it. Must be called with g_touch_lock held
+ * and after the kprobe is unregistered, so no new file can be patched from here
+ * on. The get_file() reference guarantees that a tracked file cannot be freed
+ * nor reach ->release() while it is on the list, so the file->f_op store below
+ * is never a use-after-free. If a file's f_op is no longer our proxy, some
+ * other owner replaced it: restoring would clobber that owner, so only log. */
+static void touch_restore_all_files(void)
+{
+    struct touch_patched_file *patched;
+    struct touch_patched_file *tmp;
+    LIST_HEAD(patched_files);
+    unsigned long flags;
+
+    spin_lock_irqsave(&g_touch_patch_lock, flags);
+    list_splice_init(&g_touch_patched_files, &patched_files);
+    spin_unlock_irqrestore(&g_touch_patch_lock, flags);
+
+    list_for_each_entry_safe(patched, tmp, &patched_files, node) {
+        list_del(&patched->node);
+
+        if (patched->file->f_op == &g_touch_proxy_fops) {
+            patched->file->f_op = patched->orig_fops;
+        } else {
+            pr_warn("restore skipped: %p f_op changed by other owner\n",
+                    patched->file);
+        }
+
+        put_file(patched->file);
+        kfree(patched);
+    }
+}
+
 void touch_exit(void)
 {
     touch_release_all();
@@ -710,6 +786,7 @@ void touch_exit(void)
 
     mutex_lock(&g_touch_lock);
     touch_unregister_read_hook_now();
+    touch_restore_all_files();
     g_touch_proxy_installed = false;
     g_touch_orig_read = NULL;
     g_touch_input_dev = NULL;

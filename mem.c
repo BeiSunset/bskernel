@@ -3,6 +3,7 @@
 #include <linux/sched/mm.h>
 #include <linux/mm.h>
 #include <linux/mm_types.h>
+#include <linux/pagemap.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
 #include <linux/version.h>
@@ -1209,13 +1210,13 @@ static ssize_t nc_memrw(struct mm_struct *mm, unsigned long addr, char __user *b
             break;
 
         if (!write) {
-            failed_len = copy_to_user(buf, (void *)virt, this_len);
+            failed_len = __copy_to_user(buf, (void *)virt, this_len);
             if (failed_len) {
                 copied += this_len - failed_len;
                 break;
             }
         } else {
-            failed_len = copy_from_user((void *)virt, buf, this_len);
+            failed_len = __copy_from_user((void *)virt, buf, this_len);
             if (failed_len) {
                 copied += this_len - failed_len;
                 break;
@@ -1273,13 +1274,13 @@ static ssize_t nc_memrw_cache(struct mm_struct *mm, unsigned long addr, char __u
         }
 
         if (!write) {
-            failed_len = copy_to_user(buf, (void *)virt, this_len);
+            failed_len = __copy_to_user(buf, (void *)virt, this_len);
             if (failed_len) {
                 copied += this_len - failed_len;
                 break;
             }
         } else {
-            failed_len = copy_from_user((void *)virt, buf, this_len);
+            failed_len = __copy_from_user((void *)virt, buf, this_len);
             if (failed_len) {
                 copied += this_len - failed_len;
                 break;
@@ -1341,8 +1342,32 @@ static ssize_t access_remote_vm_nc(pid_t vpid, unsigned long target, char __user
         return -EINVAL;
     }
 
-    result = nc_memrw(mm, target, buffer, count, write);
+    if (!access_ok(buffer, count)) {
+        result = -EFAULT;
+        goto out;
+    }
 
+    /* Pre-fault the caller buffer before taking mmap_lock: faulting inside
+     * copy_*_user() would take this same mmap_lock again when the target is
+     * the caller mm, which can deadlock against a pending writer. Inside the
+     * lock nc_memrw() uses only the non-sleeping __copy_*_user() helpers. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
+    if (write)
+        fault_in_readable(buffer, count);
+    else
+        fault_in_writeable(buffer, count);
+#else
+    if (write)
+        fault_in_pages_readable(buffer, count);
+    else
+        fault_in_pages_writeable(buffer, count);
+#endif
+
+    mmap_read_lock(mm);
+    result = nc_memrw(mm, target, buffer, count, write);
+    mmap_read_unlock(mm);
+
+out:
     mmput(mm);
     put_task_struct(task);
     return result;
@@ -1365,8 +1390,29 @@ static ssize_t access_remote_vm_nc_cache(pid_t vpid, unsigned long target, char 
         return -EINVAL;
     }
 
-    result = nc_memrw_cache(mm, target, buffer, count, write);
+    if (!access_ok(buffer, count)) {
+        result = -EFAULT;
+        goto out;
+    }
 
+    /* See access_remote_vm_nc(): pre-fault before taking mmap_lock. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
+    if (write)
+        fault_in_readable(buffer, count);
+    else
+        fault_in_writeable(buffer, count);
+#else
+    if (write)
+        fault_in_pages_readable(buffer, count);
+    else
+        fault_in_pages_writeable(buffer, count);
+#endif
+
+    mmap_read_lock(mm);
+    result = nc_memrw_cache(mm, target, buffer, count, write);
+    mmap_read_unlock(mm);
+
+out:
     mmput(mm);
     put_task_struct(task);
     return result;

@@ -12,6 +12,7 @@
 #include <linux/kallsyms.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/module.h>
 #include <linux/ptrace.h>
 #include <linux/sched.h>
 #include <linux/stop_machine.h>
@@ -242,6 +243,9 @@ int syscall_hook_init(void)
     if (!ni_syscall)
         return -ENOENT;
 
+    if (!try_module_get(THIS_MODULE))
+        return -ENODEV;
+
     for (i = 0; i < __NR_syscalls; i++) {
         if (READ_ONCE(g_sys_call_table[i]) != ni_syscall)
             continue;
@@ -258,26 +262,39 @@ int syscall_hook_init(void)
         return 0;
     }
 
+    module_put(THIS_MODULE);
     return install_ret;
 }
 
 void syscall_hook_exit(void)
 {
-    int ret;
+    int attempt;
+    int ret = -ENOENT;
 
     if (!g_sys_call_table)
         return;
 
-    if (g_hooked_nr >= 0 && g_orig_syscall) {
+    if (g_hooked_nr < 0 || !g_orig_syscall)
+        return;
+
+    for (attempt = 1; attempt <= 3; attempt++) {
         ret = syscall_patch_table(g_hooked_nr, g_orig_syscall);
-        if (ret)
-            pr_err("failed to restore syscall nr %d: %d\n", g_hooked_nr, ret);
-        else
-            pr_info("syscall install hook restored nr %d\n", g_hooked_nr);
+        if (!ret)
+            break;
+        pr_warn("restore syscall nr %d failed (attempt %d/3): %d\n",
+                g_hooked_nr, attempt, ret);
     }
 
+    if (ret) {
+        pr_err("syscall nr %d still hooked, keeping pin: %d\n",
+               g_hooked_nr, ret);
+        return;
+    }
+
+    pr_info("syscall install hook restored nr %d\n", g_hooked_nr);
     g_hooked_nr = -1;
     g_orig_syscall = NULL;
+    module_put(THIS_MODULE);
 }
 
 int syscall_hook_nr(void)

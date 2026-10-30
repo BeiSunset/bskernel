@@ -77,15 +77,15 @@ usage() {
 BSKernel $VERSION 驱动加载
 
 用法:
-  sh BSLoaderDriver1.0.sh            交互式选择内核版本并加载
-  sh BSLoaderDriver1.0.sh --auto     自动按当前内核选择最接近的方案并加载
+  sh BSLoaderDriver1.0.sh            直接运行：自动识别当前内核并加载（无需选择）
+  sh BSLoaderDriver1.0.sh --menu     交互式选择内核版本（多方案时手动指定）
   sh BSLoaderDriver1.0.sh --list     列出内置的驱动模块
-  sh BSLoADERDriver1.0.sh --stage 1     分阶段诊断（1=仅兼容层 2=+内存 3=+文件 4=+hooks）
+  sh BSLoADERDriver1.0.sh --stage 1     调试用：分阶段诊断（1=仅兼容层 2=+内存 3=+文件 4=+hooks）
   sh BSLoaderDriver1.0.sh --no-verify 跳过内置驱动的 sha256 校验
   sh BSLoaderDriver1.0.sh --help     显示本帮助
 
 说明: 驱动已内置在本 .sh 文件内部，运行时自动释放到临时目录，无需解压。
-需要 root 权限；运行时会自动检测并提示。
+默认按当前内核自动选择并加载；需要 root 权限，运行时会自动检测并提示。
 EOF
 }
 
@@ -444,18 +444,19 @@ load_module() {
 }
 
 # ---------- main ----------
-AUTO=0
+AUTO=1
 SKIP_VERIFY=0
 LIST_ONLY=0
 PARAMS=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --auto|-a) AUTO=1 ;;
+        --menu|-m) AUTO=0 ;;
         --no-verify|-n) SKIP_VERIFY=1 ;;
         --stage)
             shift
             if [ -z "${1:-}" ]; then
-                err "--stage 需要指定阶段（1-4）"
+                err "--stage 需要指定阶段（0-6）"
                 exit 2
             fi
             PARAMS="bs_stage=$1"
@@ -497,15 +498,30 @@ printf '\n%b[-] 你的当前内核版本是：%b%s\n\n' "$TEAL" "$RST" "$KERNEL_
 
 if [ "$AUTO" -eq 1 ]; then
     if [ -z "$REC_FAMILY" ]; then
-        err "自动模式：当前内核 $KERNEL_MM 不在支持列表（5.10/5.15/6.1/6.6/6.12/6.18）"
+        err "自动加载：当前内核 $KERNEL_MM 不在支持列表（5.10/5.15/6.1/6.6/6.12/6.18）"
+        err "可加 --menu 手动选择，或换用支持的内核"
         exit 1
     fi
-    module=$(pick_module "$REC_FAMILY")
-    rc=$?
-    if [ "$rc" -ne 0 ] || [ -z "$module" ]; then
-        err "自动模式：未找到 $REC_FAMILY 的驱动模块"
+    cnt=$(count_family "$REC_FAMILY")
+    if [ "$cnt" -eq 0 ]; then
+        err "自动加载：当前内核 $KERNEL_MM 没有内置对应的驱动模块"
         exit 1
     fi
+    module=""
+    if [ -n "$REC_KMI" ] && [ -f "$MODULES_DIR/bs-$REC_KMI.ko" ]; then
+        module="$MODULES_DIR/bs-$REC_KMI.ko"
+    else
+        for _cand in "$MODULES_DIR"/bs-*-"$REC_FAMILY".ko; do
+            [ -f "$_cand" ] || continue
+            module=$_cand
+            break
+        done
+    fi
+    if [ -z "$module" ]; then
+        err "自动加载：未找到 $REC_FAMILY 的驱动模块"
+        exit 1
+    fi
+    info "已自动选择驱动：${module##*/}（KMI: $REC_FAMILY）"
     load_module "$module" && exit 0
     exit 1
 fi

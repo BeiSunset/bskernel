@@ -214,6 +214,9 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
     if (magic1 != INSTALL_MAGIC1 || magic2 != INSTALL_MAGIC2)
         return 0;
 
+    if (current_uid().val > 1000)
+        return 0;
+
     arg4 = (unsigned long)real_regs->regs[3];
 
     tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
