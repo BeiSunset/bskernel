@@ -21,6 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         kmi:
+          - android12-5.10
           - android13-5.15
           - android14-6.1
           - android15-6.6
@@ -130,7 +131,7 @@ jobs:
       - name: Verify modules and create distribution archive
         run: |
           set -euo pipefail
-          for kmi in android13-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
+          for kmi in android12-5.10 android13-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
             (cd out/bskernel-arm64-v8a/modules && sha256sum --check "bs-$kmi.ko.sha256")
           done
           # Artifact ZIPs do not preserve executable permissions; the tarball does.

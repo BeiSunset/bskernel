@@ -18,6 +18,10 @@
 
 #include "compat.h"
 
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+
 unsigned long (*bs_kallsyms_lookup_name)(const char *name);
 int (*bs_kallsyms_lookup_size_offset)(unsigned long addr, unsigned long *size,
 				       unsigned long *offset);
@@ -116,3 +120,10 @@ int bs_compat_init(void)
 	pr_info("symbol compatibility layer ready\n");
 	return 0;
 }
+
+#else
+int bs_compat_init(void)
+{
+	return 0;
+}
+#endif

@@ -1,6 +1,10 @@
 #ifndef BS_COMPAT_H
 #define BS_COMPAT_H
 
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+
 #include <linux/types.h>
 #include <linux/kprobes.h>
 #include <linux/version.h>
@@ -84,5 +88,9 @@ int bs_compat_init(void);
 #define groups_sort (*bs_groups_sort)
 #define set_current_groups (*bs_set_current_groups)
 #define init_mm (*bs_init_mm)
+
+#else
+int bs_compat_init(void);
+#endif
 
 #endif /* BS_COMPAT_H */
