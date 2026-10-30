@@ -1,16 +1,18 @@
 # Changelog
 
 All notable changes to this repository are documented here.
-The release workflow reads `version.txt`; keep it in sync with this file and
-with `BSLoaderDriver.template.sh` (`VERSION` / `CURRENT_VERSION`).
+The release workflow reads `BS_MODULE_VERSION` from `bs_module.h`; keep it in
+sync with this file and with `BSLoaderDriver.template.sh`
+(`VERSION` / `CURRENT_VERSION`).
 
 ## Unreleased
 
-- Loader version check now tries jsDelivr first, then GitHub Raw.
+- Loader version check is served by the QQ share page again; the jsDelivr and
+  GitHub Raw fallbacks and `version.txt` were removed.
 - Removed the unused docs/ARCHITECTURE.md; architecture notes live with the source.
-
-- Loader version check now reads `version.txt` from the repository
-  (GitHub Raw with jsDelivr fallback) instead of the QQ share page.
+- Module logs are quiet by default; `bs_log_verbose=1` brings the trace back.
+- rmmod panic fixed: the module no longer deletes its own sysfs kobject.
+- Memory reads use the cached linear alias for MT_NORMAL pages (2-4x on 4 MiB).
 
 ## v1.0.0
 
