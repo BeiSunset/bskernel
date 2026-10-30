@@ -197,6 +197,7 @@ static void install_fd_tw_func(struct callback_head *cb)
     install_fd_to_user(tw->outp);
 
     kfree(tw);
+    module_put(THIS_MODULE);
 }
 
 /* ---- reboot kprobe handler ---- */
@@ -220,17 +221,25 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
     if (current_uid().val > 1000)
         return 0;
 
+    /* The task_work callback runs module text after the syscall returns;
+     * pin the module until it has run so rmmod cannot free that text. */
+    if (!try_module_get(THIS_MODULE))
+        return 0;
+
     arg4 = (unsigned long)real_regs->regs[3];
 
     tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
-    if (!tw)
+    if (!tw) {
+        module_put(THIS_MODULE);
         return 0;
+    }
 
     tw->outp = (int __user *)arg4;
     tw->cb.func = install_fd_tw_func;
 
     if (task_work_add(current, &tw->cb, TWA_RESUME)) {
         kfree(tw);
+        module_put(THIS_MODULE);
         bs_warn("task_work_add failed\n");
     }
 
@@ -359,8 +368,6 @@ static int __init mod_init(void)
 
 	remove_inte_proc_entries();
 
-	kobject_del(&THIS_MODULE->mkobj.kobj);
-
 	bs_info("module loaded, syscall_nr=%d reboot_fallback=%d\n",
 		syscall_hook_nr(), g_reboot_kprobe_registered);
 	return 0;
@@ -434,8 +441,10 @@ static void __exit mod_exit(void)
     touch_v2_release_all();
     touch_exit();
     touch_v2_exit();
-    bs_file_io_exit();
-    mem_core_exit();
+    if (g_file_inited)
+        bs_file_io_exit();
+    if (g_mem_inited)
+        mem_core_exit();
     bs_info("module unloaded\n");
 }
 

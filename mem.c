@@ -954,6 +954,9 @@ static struct __linearmap_info *__linearmap_info_arr = NULL;
 static unsigned long __linearmap_info_cnt = 0;
 static int __linearmap_info_ok = 0;
 static struct rw_semaphore __linearmap_rwlock;
+/* Only usable after mem_core_init() ran init_rwsem(); mem_core_exit() must
+ * not touch it before that. */
+static bool g_linearmap_inited;
 static struct memblock *memblock_ptr = NULL;
 
 static int __map_regions(void)
@@ -1772,16 +1775,24 @@ long mem_read_kernel(pid_t pid, uint64_t addr, void *buf, size_t size)
 
 int mem_core_init(void)
 {
+    if (g_linearmap_inited)
+        return 0;
+
     memblock_ptr = (struct memblock *)kallsyms_lookup_name("memblock");
     if (!memblock_ptr)
         return -ENOENT;
 
     init_rwsem(&__linearmap_rwlock);
+    g_linearmap_inited = true;
 
     return create_linearmap();
 }
 
 void mem_core_exit(void)
 {
+    if (!g_linearmap_inited)
+        return;
+
+    g_linearmap_inited = false;
     destroy_linearmap();
 }
