@@ -128,6 +128,13 @@ jobs:
           merge-multiple: true
           path: out/bskernel-arm64-v8a/modules
 
+      - name: Build single-file BSLoaderDriver loader
+        run: |
+          set -euo pipefail
+          python3 BSLoaderDriver/build_single.py out/bskernel-arm64-v8a/modules BSLoaderDriver.sh
+          chmod 755 BSLoaderDriver.sh
+          sha256sum BSLoaderDriver.sh > BSLoaderDriver.sh.sha256
+
       - name: Verify modules and create distribution archive
         run: |
           set -euo pipefail
@@ -169,6 +176,8 @@ jobs:
           path: |
             out/bskernel-arm64-v8a.tar.gz
             out/bskernel-arm64-v8a.tar.gz.sha256
+            BSLoaderDriver.sh
+            BSLoaderDriver.sh.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -208,6 +217,8 @@ jobs:
             out/*.tar.gz.sha256
             out/*.ko.zip
             out/*.ko.zip.sha256
+            BSLoaderDriver.sh
+            BSLoaderDriver.sh.sha256
           )
           gh release upload "$RELEASE_TAG" "${files[@]}"
 
