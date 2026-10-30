@@ -18,7 +18,7 @@ static void usage(const char* program) {
         "Usage: %s [--module FILE | --dir DIRECTORY] [--params STRING]\n"
         "       %s --status\n"
         "       %s --touch-v2-test [--slot N] [--x N] [--y N]\n"
-        "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n
+        "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n"
         "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
@@ -260,7 +260,7 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
             return 1;
         }
     }
-    std::vector<bs::MemBatchSegment> segments(size_t(count));
+    std::vector<bs::MemBatchSegment> segments(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) {
         segments[size_t(i)].addr = addr;
         segments[size_t(i)].out = buffer.data();
