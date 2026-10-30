@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
     }
 
     if (dfm::init()) {
-        std::puts("DFM interface is ready (module already loaded).");
+        std::puts("Kernel interface is ready (module already loaded).");
         dfm::close();
         return 0;
     }
