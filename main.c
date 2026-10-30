@@ -258,9 +258,11 @@ static void __init remove_inte_proc_entries(void)
         remove_proc_entry("inte_status", NULL);
 }
 
-static int dfm_stage = 0;
+/* Default to 6: skip the syscall-table hook (unstable on GKI/CFI kernels)
+ * and install the fd through the reboot kprobe instead. */
+static int dfm_stage = 6;
 module_param(dfm_stage, int, 0444);
-MODULE_PARM_DESC(dfm_stage, "1=compat only, 2=+mem, 3=+file_io, 4=+hooks, 0/5=full");
+MODULE_PARM_DESC(dfm_stage, "default 6=skip syscall hook; 0/5=full; 1=compat only; 2=+mem; 3=+file_io; 4=syscall hook only");
 static bool g_mem_inited;
 static bool g_file_inited;
 
