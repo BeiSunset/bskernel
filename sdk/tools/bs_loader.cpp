@@ -1,7 +1,9 @@
 #include <bs/driver.h>
 #include <bs/loader.h>
 
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits.h>
 #include <string>
@@ -12,6 +14,7 @@ static void usage(const char* program) {
     std::printf(
         "Usage: %s [--module FILE | --dir DIRECTORY] [--params STRING]\n"
         "       %s --status\n"
+        "       %s --touch-v2-test [--slot N] [--x N] [--y N]\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
         "--status only checks the existing BS interface; it never loads a module.\n"
@@ -19,7 +22,39 @@ static void usage(const char* program) {
         "Device example:\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader --module /data/local/tmp/bs.ko'\n",
-        program, program, program);
+        program, program, program, program);
+}
+
+static int run_touch_v2_test(int slot, int x, int y) {
+    if (!bs::init()) {
+        std::fputs("BS interface is unavailable; load the module first.\n", stderr);
+        return 1;
+    }
+    std::puts("BS interface ready.");
+    if (!bs::touch_v2_init()) {
+        std::printf("touch_v2_init failed (ioctl=%ld)\n", bs::last_ioctl_result());
+        bs::close();
+        return 1;
+    }
+    std::puts("touch_v2_init ok (deferred workqueue delivery armed).");
+    const bool down = bs::touch_v2_event(slot, x, y, true);
+    std::printf("touch_v2_event(down slot=%d x=%d y=%d) = %s\n",
+                slot, x, y, down ? "ok" : "FAILED");
+    usleep(150000);
+    const bool up = bs::touch_v2_event(slot, x, y, false);
+    std::printf("touch_v2_event(up slot=%d) = %s\n", slot, up ? "ok" : "FAILED");
+    bs::close();
+    if (!down || !up) {
+        std::fputs("touch-v2 ioctl failed; check: dmesg | grep touch-v2\n", stderr);
+        return 1;
+    }
+    std::puts("");
+    std::puts("Events queued in the kernel pool.");
+    std::puts("Now tap the touchscreen once: the panel frame emits SYN_REPORT, the");
+    std::puts("kprobe queues the batch and the workqueue injects it. Verify with:");
+    std::puts("  su -c \"dmesg | grep -E 'touch-v2.*injected' | tail -5\"");
+    std::puts("Expected: 'injected N events (batch 1, dev=<touchscreen>)'.");
+    return 0;
 }
 
 int main(int argc, char** argv) {
@@ -28,6 +63,10 @@ int main(int argc, char** argv) {
     std::string_view params;
     bool status_only = false;
     bool params_given = false;
+    bool touch_v2_test = false;
+    int touch_slot = 0;
+    int touch_x = 320;
+    int touch_y = 480;
     for (int i = 1; i < argc; ++i) {
         const std::string_view option(argv[i]);
         if (option == "--help" || option == "-h") {
@@ -36,6 +75,17 @@ int main(int argc, char** argv) {
         }
         if (option == "--status") {
             status_only = true;
+        } else if (option == "--touch-v2-test") {
+            touch_v2_test = true;
+        } else if (option == "--slot" || option == "--x" || option == "--y") {
+            if (++i == argc) {
+                std::fprintf(stderr, "Missing value for %.*s\n", int(option.size()), option.data());
+                return 2;
+            }
+            const long value = std::strtol(argv[i], nullptr, 0);
+            if (option == "--slot") touch_slot = int(value);
+            if (option == "--x") touch_x = int(value);
+            if (option == "--y") touch_y = int(value);
         } else if (option == "--module" || option == "--dir" || option == "--params") {
             if (++i == argc || (option != "--params" && !*argv[i])) {
                 std::fprintf(stderr, "Missing value for %.*s\n", int(option.size()), option.data());
@@ -50,10 +100,13 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if ((module && directory) || (status_only && (module || directory || params_given))) {
-        std::fputs("Choose one of --module, --dir or --status.\n", stderr);
+    if ((module && directory) ||
+        (status_only && (module || directory || params_given || touch_v2_test)) ||
+        (touch_v2_test && (module || directory || params_given || status_only))) {
+        std::fputs("Choose one of --module, --dir, --status or --touch-v2-test.\n", stderr);
         return 2;
     }
+    if (touch_v2_test) return run_touch_v2_test(touch_slot, touch_x, touch_y);
 
     if (bs::init()) {
         std::puts("Kernel interface is ready (module already loaded).");
