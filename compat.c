@@ -4,8 +4,10 @@
 #include <linux/kernel.h>
 #include <linux/kprobes.h>
 #include <linux/cred.h>
+#include <linux/fdtable.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/namei.h>
 #include <linux/task_work.h>
 #include <linux/security.h>
 #include <linux/uaccess.h>
@@ -16,15 +18,15 @@
 
 #include "compat.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-/* GKI 6.1+ moved VFS helpers into this namespace; without the import the
- * kernel refuses to resolve them even though they are exported. */
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
-#endif
-
 unsigned long (*dfm_kallsyms_lookup_name)(const char *name);
 int (*dfm_kallsyms_lookup_size_offset)(unsigned long addr, unsigned long *size,
 				       unsigned long *offset);
+__typeof__(&close_fd) dfm_close_fd;
+__typeof__(&kern_path) dfm_kern_path;
+__typeof__(&override_creds) dfm_override_creds;
+__typeof__(&revert_creds) dfm_revert_creds;
+__typeof__(&kernel_read) dfm_kernel_read;
+__typeof__(&kernel_write) dfm_kernel_write;
 int (*dfm_task_work_add)(struct task_struct *task,
 			 struct callback_head *work,
 			 enum task_work_notify_mode notify);
@@ -36,7 +38,8 @@ int (*dfm_apply_to_page_range)(struct mm_struct *mm, unsigned long addr,
 			       unsigned long size, pte_fn_t fn, void *data);
 void (*dfm_free_vm_area)(struct vm_struct *area);
 void (*dfm___sync_icache_dcache)(pte_t pte);
-void (*dfm___set_fixmap)(enum fixed_addresses idx, phys_addr_t phys, pgprot_t prot);
+void (*dfm___set_fixmap)(enum fixed_addresses idx, phys_addr_t phys,
+			 pgprot_t prot);
 long (*dfm_copy_to_kernel_nofault)(void *dst, const void *src, size_t size);
 void (*dfm_dcache_clean_inval_poc)(unsigned long start, unsigned long end);
 int (*dfm_set_security_override_from_ctx)(struct cred *cred, const char *secctx);
@@ -77,6 +80,12 @@ int dfm_compat_init(void)
 		return -ENOENT;
 
 	RESOLVE(kallsyms_lookup_size_offset);
+	RESOLVE(close_fd);
+	RESOLVE(kern_path);
+	RESOLVE(override_creds);
+	RESOLVE(revert_creds);
+	RESOLVE(kernel_read);
+	RESOLVE(kernel_write);
 	RESOLVE(task_work_add);
 	RESOLVE(filp_open);
 	RESOLVE(get_vm_area_caller);
