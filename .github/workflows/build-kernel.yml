@@ -211,7 +211,7 @@ jobs:
           set -euo pipefail
           # Single source of truth for the version: the module header.
           # version.txt only ever fed this line and has been removed.
-          version="$(sed -n ''s/^#define BS_MODULE_VERSION "\(.*\)"$/\1/p'' bs_module.h | head -n1)"
+          version="$(sed -n 's/^#define BS_MODULE_VERSION "\(.*\)"$/\1/p' bs_module.h | head -n1)"
           test -n "$version"
           release_name="BSKernel v${version} $(date -u '+%Y-%m-%d %H:%M UTC')"
           # Include the run and attempt so same-version builds and retries cannot collide.
