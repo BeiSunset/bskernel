@@ -15,6 +15,7 @@
 #include <linux/limits.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/mutex.h>
 #include <linux/ptrace.h>
 #include <linux/pid.h>
@@ -1076,7 +1077,12 @@ static bool kgsl_xa_node_addr_ok(const void *p)
 
     if (!addr || !IS_ALIGNED(addr, __alignof__(struct xa_node)))
         return false;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+    /* 6.6+ changed virt_addr_valid() to take the pointer itself. */
+    return is_vmalloc_addr(p) || virt_addr_valid(p);
+#else
     return is_vmalloc_addr(p) || virt_addr_valid(addr);
+#endif
 }
 
 static bool kgsl_xa_node_shape_ok(struct xa_node *node,
