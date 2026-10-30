@@ -6,6 +6,8 @@ with `BSLoaderDriver.template.sh` (`VERSION` / `CURRENT_VERSION`).
 
 ## Unreleased
 
+- Removed the unused docs/ARCHITECTURE.md; architecture notes live with the source.
+
 - Loader version check now reads `version.txt` from the repository
   (GitHub Raw with jsDelivr fallback) instead of the QQ share page.
 
@@ -18,7 +20,6 @@ with `BSLoaderDriver.template.sh` (`VERSION` / `CURRENT_VERSION`).
   generates `BSLoaderDriver.sh` and attaches it to every release.
 - `version.txt` and this changelog.
 - CI checks for module ELF metadata and loader syntax/lint.
-- `docs/ARCHITECTURE.md` describing the module layout and lifecycle.
 - `bs_module.h` with the module version and stage enum.
 
 ### Changed
