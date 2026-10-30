@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build dfm.ko for ${{ matrix.kmi }}
+    name: Build beiluo.ko for ${{ matrix.kmi }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          output="dfm-${KMI}.ko"
+          output="beiluo-${KMI}.ko"
           cp dfm.ko "out/$output"
           llvm-strip --strip-debug "out/$output"
           test -s "out/$output"
@@ -62,10 +62,10 @@ jobs:
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dfm-kernel-${{ matrix.kmi }}
+          name: beiluo-kernel-${{ matrix.kmi }}
           path: |
-            out/dfm-${{ matrix.kmi }}.ko
-            out/dfm-${{ matrix.kmi }}.ko.sha256
+            out/beiluo-${{ matrix.kmi }}.ko
+            out/beiluo-${{ matrix.kmi }}.ko.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -124,7 +124,7 @@ jobs:
       - name: Download kernel modules
         uses: actions/download-artifact@v4
         with:
-          pattern: dfm-kernel-*
+          pattern: beiluo-kernel-*
           merge-multiple: true
           path: out/bskernel-arm64-v8a/modules
 
@@ -132,7 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           for kmi in android12-5.10 android13-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
-            (cd out/bskernel-arm64-v8a/modules && sha256sum --check "dfm-$kmi.ko.sha256")
+            (cd out/bskernel-arm64-v8a/modules && sha256sum --check "beiluo-$kmi.ko.sha256")
           done
           # Artifact ZIPs do not preserve executable permissions; the tarball does.
           chmod 755 out/bskernel-arm64-v8a/bin/dfm_loader out/bskernel-arm64-v8a/bin/dfm_example
