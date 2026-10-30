@@ -48,6 +48,17 @@ jobs:
           make -j"$(nproc)" KDIR="${KERNEL_SRC:?KERNEL_SRC is not set}"
           test -s bs.ko
 
+      - name: Validate module ELF metadata
+        run: |
+          set -euo pipefail
+          llvm-readelf -h bs.ko | grep -q 'AArch64'
+          llvm-readelf -p .modinfo bs.ko > /tmp/modinfo.txt
+          grep -q 'name=bs' /tmp/modinfo.txt
+          grep -q 'license=GPL' /tmp/modinfo.txt
+          grep -q 'vermagic=' /tmp/modinfo.txt
+          echo '--- undefined symbols (first 40) ---'
+          llvm-nm -u bs.ko | sed -n '1,40p'
+
       - name: Prepare kernel artifact
         run: |
           set -euo pipefail
@@ -136,8 +147,13 @@ jobs:
       - name: Build single-file BSLoaderDriver loader
         run: |
           set -euo pipefail
+          python3 -m py_compile BSLoaderDriver/build_single.py
           python3 BSLoaderDriver/build_single.py out/bskernel-arm64-v8a/modules BSLoaderDriver.sh
           chmod 755 BSLoaderDriver.sh
+          sh -n BSLoaderDriver.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -S error BSLoaderDriver.sh
+          fi
           sha256sum BSLoaderDriver.sh > BSLoaderDriver.sh.sha256
 
       - name: Verify modules and create distribution archive
@@ -193,15 +209,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          release_name="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          # Include the run and attempt so same-day builds and retries cannot collide.
-          release_tag="$(date -u -d "$release_name" '+%Y-%m-%d-%H%M%S')-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          version="$(tr -d '[:space:]' < version.txt)"
+          release_name="BSKernel v${version} $(date -u '+%Y-%m-%d %H:%M UTC')"
+          # Include the run and attempt so same-version builds and retries cannot collide.
+          release_tag="v${version}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           release_id="$(
             gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$release_tag" \
               -f target_commitish="$GITHUB_SHA" \
               -f name="$release_name" \
-              -f body="Built from ${GITHUB_SHA}. Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
+              -f body="Version: v${version}. Built from ${GITHUB_SHA}. Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
               -F draft=true \
               --jq '.id'
           )"

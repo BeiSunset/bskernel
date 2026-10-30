@@ -11,7 +11,7 @@
 VERSION="1.0"
 GITHUB_REPO="BeiSunset/bskernel"
 CURRENT_VERSION="1.0"
-VERSION_URL="https://sharechain.qq.com/74da7436fcd8f8ed94973b3260c2fbd4?qq_aio_chat_type=3"
+VERSION_URL="${VERSION_URL:-https://sharechain.qq.com/74da7436fcd8f8ed94973b3260c2fbd4?qq_aio_chat_type=3}"
 RELEASE_TAG="2026-10-30-122646-41055081437-1"
 
 # 你的 TG 频道（可选）：例如 TG_URL="https://t.me/xxx"；留空则界面不显示
@@ -127,6 +127,13 @@ make_workdir() {
     fi
     for base in /data/local/tmp "${TMPDIR:-/tmp}" /dev; do
         [ -d "$base" ] || continue
+        if have mktemp; then
+            dir=$(mktemp -d "$base/bskernel.XXXXXX" 2>/dev/null) || dir=""
+            if [ -n "$dir" ]; then
+                MODULES_DIR="$dir"
+                return 0
+            fi
+        fi
         dir="$base/bskernel.$$"
         if mkdir -p "$dir" 2>/dev/null; then
             MODULES_DIR="$dir"
@@ -257,7 +264,16 @@ check_version() {
         ok "驱动版本验证通过,当前已是最新版本!"
         return 0
     fi
-    newer=$(awk -v a="$CURRENT_VERSION" -v b="$remote" 'BEGIN{split(a,x,".");split(b,y,"."); if((y[1]+0)>(x[1]+0)){print "1";exit} if((y[1]+0)<(x[1]+0)){print "0";exit} if((y[2]+0)>(x[2]+0)){print "1";exit} print "0"}')
+    newer=$(awk -v a="$CURRENT_VERSION" -v b="$remote" 'BEGIN {
+        n = split(a, x, "."); m = split(b, y, ".");
+        for (i = 1; i <= 3; i++) {
+            xi = (i <= n) ? x[i] + 0 : 0;
+            yi = (i <= m) ? y[i] + 0 : 0;
+            if (yi > xi) { print "1"; exit }
+            if (yi < xi) { print "0"; exit }
+        }
+        print "0"
+    }')
     if [ "$newer" = "1" ]; then
         err "驱动版本验证失败,请更新最新版本!"
         return 1
@@ -448,6 +464,7 @@ trap 'cleanup' EXIT INT TERM
 
 banner
 check_root
+umask 077
 check_environment
 cleanup_leftovers
 make_workdir

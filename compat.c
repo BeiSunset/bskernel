@@ -18,51 +18,47 @@
 
 #include "compat.h"
 
-#include <linux/version.h>
+/*
+ * Central symbol table.  Adding a new runtime dependency only requires one
+ * entry here plus the matching declaration/macro in compat.h.  Version
+ * guards stay next to the entry they apply to instead of being scattered
+ * through the resolver function.
+ */
+struct bs_compat_symbol {
+	const char *name;
+	void **slot;
+};
 
-
-unsigned long (*bs_kallsyms_lookup_name)(const char *name);
-int (*bs_kallsyms_lookup_size_offset)(unsigned long addr, unsigned long *size,
-				       unsigned long *offset);
+static const struct bs_compat_symbol bs_compat_symbols[] = {
+	{ "kallsyms_lookup_size_offset", (void **)&bs_kallsyms_lookup_size_offset },
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-__typeof__(&close_fd) bs_close_fd;
+	{ "close_fd", (void **)&bs_close_fd },
 #endif
-__typeof__(&kern_path) bs_kern_path;
-__typeof__(&override_creds) bs_override_creds;
-__typeof__(&revert_creds) bs_revert_creds;
-__typeof__(&kernel_read) bs_kernel_read;
-__typeof__(&kernel_write) bs_kernel_write;
-int (*bs_task_work_add)(struct task_struct *task,
-			 struct callback_head *work,
-			 enum task_work_notify_mode notify);
-struct file *(*bs_filp_open)(const char *name, int flags, umode_t mode);
-struct vm_struct *(*bs_get_vm_area_caller)(unsigned long size,
-					    unsigned long flags,
-					    const void *caller);
-int (*bs_apply_to_page_range)(struct mm_struct *mm, unsigned long addr,
-			       unsigned long size, pte_fn_t fn, void *data);
-void (*bs_free_vm_area)(struct vm_struct *area);
-void (*bs___sync_icache_dcache)(pte_t pte);
-void (*bs___set_fixmap)(enum fixed_addresses idx, phys_addr_t phys,
-			 pgprot_t prot);
-long (*bs_copy_to_kernel_nofault)(void *dst, const void *src, size_t size);
-void (*bs_dcache_clean_inval_poc)(unsigned long start, unsigned long end);
-int (*bs_set_security_override_from_ctx)(struct cred *cred, const char *secctx);
-struct file *(*bs_get_task_exe_file)(struct task_struct *task);
-struct group_info *(*bs_groups_alloc)(int gidsetsize);
-int (*bs_groups_search)(const struct group_info *group_info, kgid_t grp);
-void (*bs_groups_sort)(struct group_info *group_info);
-int (*bs_set_current_groups)(struct group_info *group_info);
-struct mm_struct *bs_init_mm;
-
-#define RESOLVE(fn)								\
-	do {									\
-		*(unsigned long *)&bs_##fn = bs_kallsyms_lookup_name(#fn);	\
-		if (!bs_##fn) {						\
-			pr_warn("missing symbol: %s\n", #fn);			\
-			missing++;						\
-		}								\
-	} while (0)
+	{ "kern_path", (void **)&bs_kern_path },
+	{ "override_creds", (void **)&bs_override_creds },
+	{ "revert_creds", (void **)&bs_revert_creds },
+	{ "kernel_read", (void **)&bs_kernel_read },
+	{ "kernel_write", (void **)&bs_kernel_write },
+	{ "task_work_add", (void **)&bs_task_work_add },
+	{ "filp_open", (void **)&bs_filp_open },
+	{ "get_vm_area_caller", (void **)&bs_get_vm_area_caller },
+	{ "apply_to_page_range", (void **)&bs_apply_to_page_range },
+	{ "free_vm_area", (void **)&bs_free_vm_area },
+	{ "__sync_icache_dcache", (void **)&bs___sync_icache_dcache },
+	{ "__set_fixmap", (void **)&bs___set_fixmap },
+	{ "copy_to_kernel_nofault", (void **)&bs_copy_to_kernel_nofault },
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+	{ "dcache_clean_inval_poc", (void **)&bs_dcache_clean_inval_poc },
+#endif
+	{ "set_security_override_from_ctx",
+	  (void **)&bs_set_security_override_from_ctx },
+	{ "get_task_exe_file", (void **)&bs_get_task_exe_file },
+	{ "groups_alloc", (void **)&bs_groups_alloc },
+	{ "groups_search", (void **)&bs_groups_search },
+	{ "groups_sort", (void **)&bs_groups_sort },
+	{ "set_current_groups", (void **)&bs_set_current_groups },
+	{ "init_mm", (void **)&bs_init_mm },
+};
 
 int bs_compat_init(void)
 {
@@ -70,8 +66,9 @@ int bs_compat_init(void)
 		.symbol_name = "kallsyms_lookup_name",
 	};
 	unsigned long addr;
+	size_t i;
+	size_t missing = 0;
 	int ret;
-	int missing = 0;
 
 	ret = register_kprobe(&kp);
 	if (ret < 0) {
@@ -84,45 +81,22 @@ int bs_compat_init(void)
 	if (!bs_kallsyms_lookup_name)
 		return -ENOENT;
 
-	RESOLVE(kallsyms_lookup_size_offset);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-	RESOLVE(close_fd);
-#endif
-	RESOLVE(kern_path);
-	RESOLVE(override_creds);
-	RESOLVE(revert_creds);
-	RESOLVE(kernel_read);
-	RESOLVE(kernel_write);
-	RESOLVE(task_work_add);
-	RESOLVE(filp_open);
-	RESOLVE(get_vm_area_caller);
-	RESOLVE(apply_to_page_range);
-	RESOLVE(free_vm_area);
-	RESOLVE(__sync_icache_dcache);
-	RESOLVE(__set_fixmap);
-	RESOLVE(copy_to_kernel_nofault);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
-	RESOLVE(dcache_clean_inval_poc);
-#endif
-	RESOLVE(set_security_override_from_ctx);
-	RESOLVE(get_task_exe_file);
-	RESOLVE(groups_alloc);
-	RESOLVE(groups_search);
-	RESOLVE(groups_sort);
-	RESOLVE(set_current_groups);
+	for (i = 0; i < ARRAY_SIZE(bs_compat_symbols); i++) {
+		const struct bs_compat_symbol *sym = &bs_compat_symbols[i];
 
-	addr = bs_kallsyms_lookup_name("init_mm");
-	bs_init_mm = (void *)addr;
-	if (!bs_init_mm) {
-		pr_warn("missing symbol: init_mm\n");
-		missing++;
+		addr = bs_kallsyms_lookup_name(sym->name);
+		*sym->slot = (void *)addr;
+		if (!addr) {
+			pr_err("missing required symbol: %s\n", sym->name);
+			missing++;
+		}
 	}
 
 	if (missing) {
-		pr_err("%d required symbol(s) missing\n", missing);
+		pr_err("%zu required symbol(s) missing\n", missing);
 		return -ENOENT;
 	}
-	pr_info("symbol compatibility layer ready\n");
+
+	pr_info("resolved %zu symbols\n", ARRAY_SIZE(bs_compat_symbols));
 	return 0;
 }
-

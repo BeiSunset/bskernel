@@ -29,10 +29,12 @@
 #include "file_io.h"
 #include "sf_groups.h"
 #include "compat.h"
+#include "bs_module.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("BS");
 MODULE_DESCRIPTION("BS lab debug module");
+MODULE_VERSION(BS_MODULE_VERSION);
 
 /* ---- ioctl dispatcher ---- */
 
@@ -260,113 +262,129 @@ static void __init remove_inte_proc_entries(void)
 
 /* Default to 6: skip the syscall-table hook (unstable on GKI/CFI kernels)
  * and install the fd through the reboot kprobe instead. */
-static int bs_stage = 6;
+static int bs_stage = BS_STAGE_NO_SYSCALL;
 module_param(bs_stage, int, 0444);
-MODULE_PARM_DESC(bs_stage, "default 6=skip syscall hook; 0/5=full; 1=compat only; 2=+mem; 3=+file_io; 4=syscall hook only");
+MODULE_PARM_DESC(bs_stage, "0=full, 1=compat, 2=+mem, 3=+file_io, 4=syscall-only, 5=reboot-only, 6=full-skip-syscall (default)");
 static bool g_mem_inited;
 static bool g_file_inited;
 
 static int __init mod_init(void)
 {
-    int ret;
-    int syscall_ret;
-    int reboot_ret;
+	int ret;
+	int syscall_ret;
+	int reboot_ret;
 
-    ret = bs_compat_init();
-    if (ret < 0) {
-        pr_err("compat init failed: %d\n", ret);
-        return ret;
-    }
+	ret = bs_compat_init();
+	if (ret < 0) {
+		pr_err("compat init failed: %d\n", ret);
+		return ret;
+	}
 
-    pr_info("compat ready, stage=%d\n", bs_stage);
-    if (bs_stage == 1)
-        return 0;
+	pr_info("compat ready, stage=%d\n", bs_stage);
+	if (bs_stage == BS_STAGE_COMPAT)
+		return 0;
 
-    ret = mem_core_init();
-    if (ret < 0) {
-        pr_err("mem_core_init failed: %d\n", ret);
-        return ret;
-    }
-    g_mem_inited = true;
-    if (bs_stage == 2)
-        return 0;
+	ret = mem_core_init();
+	if (ret < 0) {
+		pr_err("mem_core_init failed: %d\n", ret);
+		return ret;
+	}
+	g_mem_inited = true;
+	if (bs_stage == BS_STAGE_MEM)
+		return 0;
 
-    ret = bs_file_io_init();
-    if (ret < 0) {
-        pr_err("bs_file_io_init failed: %d\n", ret);
-        g_mem_inited = false;
-        mem_core_exit();
-        return ret;
-    }
-    g_file_inited = true;
-    if (bs_stage == 3)
-        return 0;
+	ret = bs_file_io_init();
+	if (ret < 0) {
+		pr_err("bs_file_io_init failed: %d\n", ret);
+		goto err_mem;
+	}
+	g_file_inited = true;
+	if (bs_stage == BS_STAGE_FILE)
+		return 0;
 
-    if (bs_stage == 4) {
-        syscall_ret = syscall_hook_init();
-        if (syscall_ret < 0)
-            pr_warn("syscall install hook unavailable: %d\n", syscall_ret);
-        return 0;
-    }
+	if (bs_stage == BS_STAGE_SYSCALL) {
+		syscall_ret = syscall_hook_init();
+		if (syscall_ret < 0)
+			pr_warn("syscall install hook unavailable: %d\n",
+				syscall_ret);
+		return 0;
+	}
 
-    if (bs_stage == 5) {
-        reboot_ret = register_kprobe(&kp_reboot);
-        if (reboot_ret < 0) {
-            pr_warn("failed to register kprobe on reboot: %d\n", reboot_ret);
-            return reboot_ret;
-        }
-        g_reboot_kprobe_registered = 1;
-        return 0;
-    }
+	if (bs_stage == BS_STAGE_REBOOT) {
+		reboot_ret = register_kprobe(&kp_reboot);
+		if (reboot_ret < 0) {
+			pr_warn("failed to register kprobe on reboot: %d\n",
+				reboot_ret);
+			ret = reboot_ret;
+			goto err_file;
+		}
+		g_reboot_kprobe_registered = 1;
+		return 0;
+	}
 
-    if (bs_stage == 6) {
-        syscall_ret = -ENOENT;
-        pr_info("skipping syscall hook, using reboot kprobe only\n");
-    } else {
-        syscall_ret = syscall_hook_init();
-        if (syscall_ret < 0)
-            pr_warn("syscall install hook unavailable: %d\n", syscall_ret);
-    }
+	if (bs_stage == BS_STAGE_NO_SYSCALL) {
+		syscall_ret = -ENOENT;
+		pr_info("skipping syscall hook, using reboot kprobe only\n");
+	} else {
+		syscall_ret = syscall_hook_init();
+		if (syscall_ret < 0)
+			pr_warn("syscall install hook unavailable: %d\n",
+				syscall_ret);
+	}
 
-    reboot_ret = register_kprobe(&kp_reboot);
-    if (reboot_ret < 0) {
-        pr_warn("failed to register kprobe on reboot: %d\n", reboot_ret);
-    } else {
-        g_reboot_kprobe_registered = 1;
-    }
+	reboot_ret = register_kprobe(&kp_reboot);
+	if (reboot_ret < 0) {
+		pr_warn("failed to register kprobe on reboot: %d\n",
+			reboot_ret);
+	} else {
+		g_reboot_kprobe_registered = 1;
+	}
 
-    if (syscall_ret < 0 && reboot_ret < 0) {
-        pr_err("no fd install entry registered\n");
-        syscall_hook_exit();
-        bs_file_io_exit();
-        mem_core_exit();
-        return reboot_ret;
-    }
+	if (syscall_ret < 0 && reboot_ret < 0) {
+		pr_err("no fd install entry registered\n");
+		ret = reboot_ret;
+		goto err_hooks;
+	}
 
-    (void)kgsl_hide_init();
+	(void)kgsl_hide_init();
 
-    remove_inte_proc_entries();
+	remove_inte_proc_entries();
 
-    kobject_del(&THIS_MODULE->mkobj.kobj);
+	kobject_del(&THIS_MODULE->mkobj.kobj);
 
-    pr_info("module loaded, syscall_nr=%d reboot_fallback=%d\n",
-            syscall_hook_nr(), g_reboot_kprobe_registered);
-    return 0;
+	pr_info("module loaded, syscall_nr=%d reboot_fallback=%d\n",
+		syscall_hook_nr(), g_reboot_kprobe_registered);
+	return 0;
+
+err_hooks:
+	if (bs_stage == BS_STAGE_FULL)
+		syscall_hook_exit();
+err_file:
+	if (g_file_inited) {
+		bs_file_io_exit();
+		g_file_inited = false;
+	}
+err_mem:
+	if (g_mem_inited) {
+		mem_core_exit();
+		g_mem_inited = false;
+	}
+	return ret;
 }
 
 static void __exit mod_exit(void)
 {
-    if (bs_stage == 1) {
+    if (bs_stage == BS_STAGE_COMPAT) {
         pr_info("stage1 module unloaded\n");
         return;
     }
-    if (bs_stage == 2) {
+    if (bs_stage == BS_STAGE_MEM) {
         if (g_mem_inited)
             mem_core_exit();
         pr_info("stage2 module unloaded\n");
         return;
     }
-    if (bs_stage == 3) {
+    if (bs_stage == BS_STAGE_FILE) {
         if (g_file_inited)
             bs_file_io_exit();
         if (g_mem_inited)
@@ -374,7 +392,7 @@ static void __exit mod_exit(void)
         pr_info("stage3 module unloaded\n");
         return;
     }
-    if (bs_stage == 4) {
+    if (bs_stage == BS_STAGE_SYSCALL) {
         syscall_hook_exit();
         if (g_file_inited)
             bs_file_io_exit();
@@ -383,7 +401,7 @@ static void __exit mod_exit(void)
         pr_info("stage4 module unloaded\n");
         return;
     }
-    if (bs_stage == 5) {
+    if (bs_stage == BS_STAGE_REBOOT) {
         if (g_reboot_kprobe_registered) {
             unregister_kprobe(&kp_reboot);
             g_reboot_kprobe_registered = 0;
