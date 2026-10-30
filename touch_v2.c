@@ -5,9 +5,11 @@
 #include <linux/input.h>
 #include <linux/kprobes.h>
 #include <linux/mutex.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
+#include <linux/workqueue.h>
 
 #include "abi.h"
 #include "touch_v2.h"
@@ -34,8 +36,18 @@ static struct touch_v2_cached_event
 static unsigned int g_touch_v2_event_count;
 static bool g_touch_v2_slot_active[TOUCH_V2_MAX_SLOTS];
 
+/* Deferred delivery: the kprobe handler only marks a batch and queues work;
+ * input_event() itself always runs in the workqueue's process context, so no
+ * input/evdev lock is ever taken from an IRQ-disabled kprobe handler. */
+static struct work_struct g_touch_v2_flush_work;
+static bool g_touch_v2_work_initialized;
+static struct input_dev *g_touch_v2_deliver_dev;
+static bool g_touch_v2_work_queued;
+static bool g_touch_v2_injecting;
+static unsigned long g_touch_v2_injected_batches;
+static unsigned long g_touch_v2_injected_events;
+
 static DEFINE_MUTEX(g_touch_v2_init_lock);
-static atomic_t g_touch_v2_draining = ATOMIC_INIT(0);
 static struct kprobe g_touch_v2_input_event_kp;
 static struct kprobe g_touch_v2_input_inject_event_kp;
 static bool g_touch_v2_input_event_registered;
@@ -128,30 +140,84 @@ static void touch_v2_queue_up_locked(int slot)
     g_touch_v2_slot_active[slot] = false;
 }
 
-static void touch_v2_flush_on_sync(struct input_dev *dev)
+static void touch_v2_flush_workfn(struct work_struct *work)
+{
+    struct touch_v2_cached_event *batch;
+    struct input_dev *dev;
+    unsigned int n;
+    unsigned int i;
+    unsigned long flags;
+
+    batch = kmalloc_array(TOUCH_V2_MAX_EVENTS, sizeof(*batch), GFP_KERNEL);
+
+    for (;;) {
+        spin_lock_irqsave(&g_touch_v2_pool_lock, flags);
+        n = g_touch_v2_event_count;
+        dev = g_touch_v2_deliver_dev;
+        if (!n || !dev) {
+            spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
+            break;
+        }
+        if (!batch) {
+            /* Allocation failed: drop the batch instead of injecting a
+             * partial frame. */
+            g_touch_v2_event_count = 0;
+            spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
+            break;
+        }
+        memcpy(batch, g_touch_v2_events, n * sizeof(*batch));
+        g_touch_v2_event_count = 0;
+        spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
+
+        /* Process context: input_event() takes input/evdev locks and may
+         * wake waiters, which is illegal in the kprobe handler. */
+        g_touch_v2_injecting = true;
+        for (i = 0; i < n; ++i)
+            input_event(dev, batch[i].type, batch[i].code,
+                        batch[i].value);
+        /* Close our own frame so the batch is a complete packet rather than
+         * leaking into the next real touch frame. */
+        input_event(dev, EV_SYN, SYN_REPORT, 0);
+        g_touch_v2_injecting = false;
+
+        g_touch_v2_injected_batches++;
+        g_touch_v2_injected_events += n;
+        pr_info_ratelimited("injected %u events (batch %lu, dev=%s)\n",
+                            n, g_touch_v2_injected_batches, dev->name);
+    }
+
+    spin_lock_irqsave(&g_touch_v2_pool_lock, flags);
+    dev = g_touch_v2_deliver_dev;
+    g_touch_v2_deliver_dev = NULL;
+    g_touch_v2_work_queued = false;
+    spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
+    if (dev)
+        put_device(&dev->dev);
+    kfree(batch);
+}
+
+static void touch_v2_schedule_flush(struct input_dev *dev)
 {
     unsigned long flags;
-    unsigned int i;
 
-    if (!touch_v2_is_touchscreen(dev))
+    if (!dev || !touch_v2_is_touchscreen(dev))
         return;
-
-    /* input_event() below re-enters the probed symbol.  Kprobes normally
-     * suppresses a nested pre-handler; this guard also makes that assumption
-     * explicit and prevents a second CPU from draining the same batch. */
-    if (atomic_cmpxchg(&g_touch_v2_draining, 0, 1) != 0)
+    /* Our own injected frames must not re-enter the queueing path. */
+    if (READ_ONCE(g_touch_v2_injecting))
         return;
 
     spin_lock_irqsave(&g_touch_v2_pool_lock, flags);
-    for (i = 0; i < g_touch_v2_event_count; ++i) {
-        const struct touch_v2_cached_event *event =
-            &g_touch_v2_events[i];
-        input_event(dev, event->type, event->code, event->value);
+    if (!g_touch_v2_event_count || g_touch_v2_work_queued) {
+        spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
+        return;
     }
-    g_touch_v2_event_count = 0;
+    /* Keep the input device alive until the workqueue is done with it. */
+    get_device(&dev->dev);
+    g_touch_v2_deliver_dev = dev;
+    g_touch_v2_work_queued = true;
     spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
 
-    atomic_set(&g_touch_v2_draining, 0);
+    schedule_work(&g_touch_v2_flush_work);
 }
 
 static int touch_v2_input_event_pre(struct kprobe *p, struct pt_regs *regs)
@@ -161,7 +227,7 @@ static int touch_v2_input_event_pre(struct kprobe *p, struct pt_regs *regs)
     unsigned int code = (unsigned int)regs->regs[2];
 
     if (type == EV_SYN && code == SYN_REPORT)
-        touch_v2_flush_on_sync(dev);
+        touch_v2_schedule_flush(dev);
     return 0;
 }
 
@@ -174,7 +240,7 @@ static int touch_v2_input_inject_event_pre(struct kprobe *p,
     unsigned int code = (unsigned int)regs->regs[2];
 
     if (handle && type == EV_SYN && code == SYN_REPORT)
-        touch_v2_flush_on_sync(handle->dev);
+        touch_v2_schedule_flush(handle->dev);
     return 0;
 }
 
@@ -232,6 +298,10 @@ long touch_v2_init(void)
     int ret;
 
     mutex_lock(&g_touch_v2_init_lock);
+    if (!g_touch_v2_work_initialized) {
+        INIT_WORK(&g_touch_v2_flush_work, touch_v2_flush_workfn);
+        g_touch_v2_work_initialized = true;
+    }
     ret = touch_v2_register_hooks_locked();
     mutex_unlock(&g_touch_v2_init_lock);
     return ret;
@@ -276,6 +346,7 @@ void touch_v2_release_all(void)
 
 void touch_v2_exit(void)
 {
+    struct input_dev *dev;
     unsigned long flags;
 
     mutex_lock(&g_touch_v2_init_lock);
@@ -289,9 +360,17 @@ void touch_v2_exit(void)
     }
     mutex_unlock(&g_touch_v2_init_lock);
 
+    if (g_touch_v2_work_initialized)
+        cancel_work_sync(&g_touch_v2_flush_work);
+
     spin_lock_irqsave(&g_touch_v2_pool_lock, flags);
+    dev = g_touch_v2_deliver_dev;
+    g_touch_v2_deliver_dev = NULL;
+    g_touch_v2_work_queued = false;
+    g_touch_v2_injecting = false;
     g_touch_v2_event_count = 0;
     memset(g_touch_v2_slot_active, 0, sizeof(g_touch_v2_slot_active));
     spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
-    atomic_set(&g_touch_v2_draining, 0);
+    if (dev)
+        put_device(&dev->dev);
 }
