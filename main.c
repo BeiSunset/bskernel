@@ -24,15 +24,15 @@
 #include "syscall.h"
 #include "touch.h"
 #include "touch_v2.h"
-#include "dfm_hwb.h"
+#include "bs_hwb.h"
 #include "udp_capture.h"
 #include "file_io.h"
 #include "sf_groups.h"
 #include "compat.h"
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("DFM");
-MODULE_DESCRIPTION("DFM lab debug module");
+MODULE_AUTHOR("BS");
+MODULE_DESCRIPTION("BS lab debug module");
 
 /* ---- ioctl dispatcher ---- */
 
@@ -83,19 +83,19 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return mem_get_thread_stack(argp);
     case MEM_IOC_EXECUTE_PACGA:
         return mem_execute_pacga(argp);
-    case DFM_IOCTL_HWB_INFO:
-        return dfm_hwb_info(argp);
-    case DFM_IOCTL_HWB_SLOTS:
-        return dfm_hwb_slots(argp);
-    case DFM_IOCTL_HWB_SET:
-        return dfm_hwb_set(filp, argp);
-    case DFM_IOCTL_HWB_READ:
-        return dfm_hwb_read(argp);
-    case DFM_IOCTL_HWB_CLEAR:
-        return dfm_hwb_clear();
-    case DFM_IOCTL_KGSL_SYNCSOURCE_PEEK:
+    case BS_IOCTL_HWB_INFO:
+        return bs_hwb_info(argp);
+    case BS_IOCTL_HWB_SLOTS:
+        return bs_hwb_slots(argp);
+    case BS_IOCTL_HWB_SET:
+        return bs_hwb_set(filp, argp);
+    case BS_IOCTL_HWB_READ:
+        return bs_hwb_read(argp);
+    case BS_IOCTL_HWB_CLEAR:
+        return bs_hwb_clear();
+    case BS_IOCTL_KGSL_SYNCSOURCE_PEEK:
         return kgsl_syncsource_peek(argp);
-    case DFM_IOCTL_KGSL_QUERY:
+    case BS_IOCTL_KGSL_QUERY:
         return kgsl_query(argp);
     case UDP_IOC_INIT:
         return udp_capture_init(argp);
@@ -103,12 +103,12 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return udp_capture_read(argp);
     case UDP_IOC_STOP:
         return udp_capture_stop();
-    case DFM_FILE_IOC_READ:
-        return dfm_file_read(argp);
-    case DFM_FILE_IOC_WRITE:
-        return dfm_file_write(argp);
-    case DFM_CRED_IOC_ACQUIRE_SF_GROUPS:
-        return dfm_sf_groups_acquire(argp);
+    case BS_FILE_IOC_READ:
+        return bs_file_read(argp);
+    case BS_FILE_IOC_WRITE:
+        return bs_file_write(argp);
+    case BS_CRED_IOC_ACQUIRE_SF_GROUPS:
+        return bs_sf_groups_acquire(argp);
     default:
         return -ENOTTY;
     }
@@ -116,7 +116,7 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 static int drv_release(struct inode *inode, struct file *filp)
 {
-    dfm_hwb_release_owner(filp);
+    bs_hwb_release_owner(filp);
     udp_capture_stop();
     touch_v2_release_all();
     touch_release_all();
@@ -143,7 +143,7 @@ static int install_fd(void)
     if (fd < 0)
         return fd;
 
-    filp = anon_inode_getfile("[dfm]", &drv_fops, NULL,
+    filp = anon_inode_getfile("[bs]", &drv_fops, NULL,
                               O_RDWR | O_CLOEXEC);
     if (IS_ERR(filp)) {
         put_unused_fd(fd);
@@ -260,9 +260,9 @@ static void __init remove_inte_proc_entries(void)
 
 /* Default to 6: skip the syscall-table hook (unstable on GKI/CFI kernels)
  * and install the fd through the reboot kprobe instead. */
-static int dfm_stage = 6;
-module_param(dfm_stage, int, 0444);
-MODULE_PARM_DESC(dfm_stage, "default 6=skip syscall hook; 0/5=full; 1=compat only; 2=+mem; 3=+file_io; 4=syscall hook only");
+static int bs_stage = 6;
+module_param(bs_stage, int, 0444);
+MODULE_PARM_DESC(bs_stage, "default 6=skip syscall hook; 0/5=full; 1=compat only; 2=+mem; 3=+file_io; 4=syscall hook only");
 static bool g_mem_inited;
 static bool g_file_inited;
 
@@ -272,14 +272,14 @@ static int __init mod_init(void)
     int syscall_ret;
     int reboot_ret;
 
-    ret = dfm_compat_init();
+    ret = bs_compat_init();
     if (ret < 0) {
         pr_err("compat init failed: %d\n", ret);
         return ret;
     }
 
-    pr_info("compat ready, stage=%d\n", dfm_stage);
-    if (dfm_stage == 1)
+    pr_info("compat ready, stage=%d\n", bs_stage);
+    if (bs_stage == 1)
         return 0;
 
     ret = mem_core_init();
@@ -288,28 +288,28 @@ static int __init mod_init(void)
         return ret;
     }
     g_mem_inited = true;
-    if (dfm_stage == 2)
+    if (bs_stage == 2)
         return 0;
 
-    ret = dfm_file_io_init();
+    ret = bs_file_io_init();
     if (ret < 0) {
-        pr_err("dfm_file_io_init failed: %d\n", ret);
+        pr_err("bs_file_io_init failed: %d\n", ret);
         g_mem_inited = false;
         mem_core_exit();
         return ret;
     }
     g_file_inited = true;
-    if (dfm_stage == 3)
+    if (bs_stage == 3)
         return 0;
 
-    if (dfm_stage == 4) {
+    if (bs_stage == 4) {
         syscall_ret = syscall_hook_init();
         if (syscall_ret < 0)
             pr_warn("syscall install hook unavailable: %d\n", syscall_ret);
         return 0;
     }
 
-    if (dfm_stage == 5) {
+    if (bs_stage == 5) {
         reboot_ret = register_kprobe(&kp_reboot);
         if (reboot_ret < 0) {
             pr_warn("failed to register kprobe on reboot: %d\n", reboot_ret);
@@ -319,7 +319,7 @@ static int __init mod_init(void)
         return 0;
     }
 
-    if (dfm_stage == 6) {
+    if (bs_stage == 6) {
         syscall_ret = -ENOENT;
         pr_info("skipping syscall hook, using reboot kprobe only\n");
     } else {
@@ -338,7 +338,7 @@ static int __init mod_init(void)
     if (syscall_ret < 0 && reboot_ret < 0) {
         pr_err("no fd install entry registered\n");
         syscall_hook_exit();
-        dfm_file_io_exit();
+        bs_file_io_exit();
         mem_core_exit();
         return reboot_ret;
     }
@@ -356,40 +356,40 @@ static int __init mod_init(void)
 
 static void __exit mod_exit(void)
 {
-    if (dfm_stage == 1) {
+    if (bs_stage == 1) {
         pr_info("stage1 module unloaded\n");
         return;
     }
-    if (dfm_stage == 2) {
+    if (bs_stage == 2) {
         if (g_mem_inited)
             mem_core_exit();
         pr_info("stage2 module unloaded\n");
         return;
     }
-    if (dfm_stage == 3) {
+    if (bs_stage == 3) {
         if (g_file_inited)
-            dfm_file_io_exit();
+            bs_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
         pr_info("stage3 module unloaded\n");
         return;
     }
-    if (dfm_stage == 4) {
+    if (bs_stage == 4) {
         syscall_hook_exit();
         if (g_file_inited)
-            dfm_file_io_exit();
+            bs_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
         pr_info("stage4 module unloaded\n");
         return;
     }
-    if (dfm_stage == 5) {
+    if (bs_stage == 5) {
         if (g_reboot_kprobe_registered) {
             unregister_kprobe(&kp_reboot);
             g_reboot_kprobe_registered = 0;
         }
         if (g_file_inited)
-            dfm_file_io_exit();
+            bs_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
         pr_info("stage5 module unloaded\n");
@@ -403,11 +403,11 @@ static void __exit mod_exit(void)
     }
     syscall_hook_exit();
     udp_capture_exit();
-    dfm_hwb_exit();
+    bs_hwb_exit();
     touch_v2_release_all();
     touch_exit();
     touch_v2_exit();
-    dfm_file_io_exit();
+    bs_file_io_exit();
     mem_core_exit();
     pr_info("module unloaded\n");
 }

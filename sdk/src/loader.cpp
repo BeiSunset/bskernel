@@ -1,7 +1,7 @@
-#include <dfm/loader.h>
+#include <bs/loader.h>
 #include "loader_elf.h"
 
-#include <dfm/driver.h>
+#include <bs/driver.h>
 #include "log.h"
 
 #include <fcntl.h>
@@ -234,8 +234,8 @@ bool load_image(std::string image, std::string_view params)
     std::string module_name, vermagic;
     ElfView elf(image);
     if (image.size() > kMaxModuleSize || !elf.parse() ||
-        !elf.modinfo("name", module_name) || module_name != "dfm") {
-        LOGE("loader: expected a raw AArch64 ELF module named dfm");
+        !elf.modinfo("name", module_name) || module_name != "bs") {
+        LOGE("loader: expected a raw AArch64 ELF module named bs");
         return false;
     }
     elf.modinfo("vermagic", vermagic);
@@ -264,14 +264,14 @@ bool load_image(std::string image, std::string_view params)
 
     // EEXIST alone is not success: an incompatible/other module may own the name.
     for (int attempt = 0; attempt < 10; ++attempt) {
-        if (dfm::init()) {
-            LOGI("loader: DFM module loaded and verified");
+        if (bs::init()) {
+            LOGI("loader: BS module loaded and verified");
             return true;
         }
         if (attempt != 9)
             usleep(100000);
     }
-    LOGE("loader: module inserted/already exists but DFM interface is unavailable");
+    LOGE("loader: module inserted/already exists but BS interface is unavailable");
     return false;
 }
 
@@ -282,12 +282,12 @@ namespace loader {
 const char* module_filename(std::string_view release) {
     struct Module { const char* version; const char* filename; };
     static constexpr Module modules[] = {
-        {"6.18", "dfm-android17-6.18.ko"},
-        {"6.12", "dfm-android16-6.12.ko"},
-        {"6.6", "dfm-android15-6.6.ko"},
-        {"6.1", "dfm-android14-6.1.ko"},
-        {"5.15", "dfm-android13-5.15.ko"},
-        {"5.10", "dfm-android12-5.10.ko"},
+        {"6.18", "bs-android17-6.18.ko"},
+        {"6.12", "bs-android16-6.12.ko"},
+        {"6.6", "bs-android15-6.6.ko"},
+        {"6.1", "bs-android14-6.1.ko"},
+        {"5.15", "bs-android13-5.15.ko"},
+        {"5.10", "bs-android12-5.10.ko"},
     };
     for (const auto& module : modules) {
         if (release_matches(release, module.version))
@@ -349,7 +349,7 @@ bool load_module_file(const char* path, std::string_view params)
         }
         offset += size_t(count);
     }
-    LOGI("loader: loading DFM module from %s", path);
+    LOGI("loader: loading BS module from %s", path);
     return load_image(std::move(image), params);
 }
 

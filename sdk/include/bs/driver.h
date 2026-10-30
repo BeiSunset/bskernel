@@ -1,12 +1,12 @@
-#ifndef DFM_DRIVER_H
-#define DFM_DRIVER_H
+#ifndef BS_DRIVER_H
+#define BS_DRIVER_H
 
 #include <cstdint>
 #include <cstddef>
 
-#include <dfm/abi.h>
+#include <bs/abi.h>
 
-namespace dfm {
+namespace bs {
     struct PacgaExecutionInfo {
         /* Raw return from the ioctl syscall: 0 means the command was handled;
          * a negative errno (notably -ENOTTY) means it never reached a usable
@@ -70,12 +70,12 @@ namespace dfm {
      * Return 0 means completed: inspect out_errno for a guest syscall error.
      * Negative return means infrastructure failure (ENOTTY: old module).
      * No legacy caller-fd or userspace-system-call fallback. */
-    long query_kgsl(dfm_kgsl_query_req& request);
+    long query_kgsl(bs_kgsl_query_req& request);
 
-    bool hwb_info(dfm_hwb_info_req& out);
-    bool hwb_slots(int targetTid, dfm_hwb_slots_req& out);
-    bool hwb_set(int targetTid, const dfm_hwb_point_req* points, size_t pointCount);
-    bool hwb_read(dfm_hwb_snapshot& out);
+    bool hwb_info(bs_hwb_info_req& out);
+    bool hwb_slots(int targetTid, bs_hwb_slots_req& out);
+    bool hwb_set(int targetTid, const bs_hwb_point_req* points, size_t pointCount);
+    bool hwb_read(bs_hwb_snapshot& out);
     bool hwb_clear();
     /* Raw result of the most recent issued ioctl on this thread (negative errno).
      * Argument validation can fail before issuing an ioctl; do not rely on libc errno. */
@@ -92,7 +92,7 @@ namespace dfm {
                    uint64_t offset = 0, uint64_t* out_file_size = nullptr);
     bool file_write(const char* path, const void* buf, size_t size,
                     size_t& out_size,
-                    uint32_t flags = DFM_FILE_WRITE_CREATE | DFM_FILE_WRITE_TRUNCATE,
+                    uint32_t flags = BS_FILE_WRITE_CREATE | BS_FILE_WRITE_TRUNCATE,
                     uint64_t offset = 0, uint64_t* out_file_size = nullptr);
     struct SfGroupGrantInfo {
         long ioctlResult = 0;
@@ -134,6 +134,6 @@ namespace dfm {
             return T{};
         return val;
     }
-} // namespace dfm
+} // namespace bs
 
-#endif /* DFM_DRIVER_H */
+#endif /* BS_DRIVER_H */

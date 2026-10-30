@@ -1,7 +1,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #ifndef __aarch64__
-#error "DFM kernel module requires ARM64"
+#error "BS kernel module requires ARM64"
 #endif
 
 #include <linux/atomic.h>

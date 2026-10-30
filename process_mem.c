@@ -58,7 +58,7 @@ static bool caller_allowed(void)
         uid_eq(cred->uid, GLOBAL_ROOT_UID) &&
         uid_eq(cred->euid, GLOBAL_ROOT_UID))
         return true;
-    return dfm_is_surfaceflinger_caller();
+    return bs_is_surfaceflinger_caller();
 }
 
 static struct mm_struct *live_mm(struct process_mem_session *session)
@@ -342,7 +342,7 @@ static void cleanup_patch(struct work_struct *work)
     got_ret = transfer(session, mm, session->patch.got_addr,
                        &session->patch.original, sizeof(u64), true);
     if (delta_ret != sizeof(u64) || got_ret != sizeof(u64))
-        pr_warn("dfm: sensor session cleanup failed delta=%zd got=%zd\n", delta_ret, got_ret);
+        pr_warn("bs: sensor session cleanup failed delta=%zd got=%zd\n", delta_ret, got_ret);
     mmput(mm);
 }
 
@@ -456,7 +456,7 @@ long mem_open_process_mem(void __user *arg)
     mm = NULL;
     fd = get_unused_fd_flags(O_CLOEXEC);
     if (fd < 0) { ret = fd; goto fail; }
-    file = anon_inode_getfile("[dfm-sensor-mem]", &process_mem_fops, session, O_RDWR | O_CLOEXEC);
+    file = anon_inode_getfile("[bs-sensor-mem]", &process_mem_fops, session, O_RDWR | O_CLOEXEC);
     if (IS_ERR(file)) {
         put_unused_fd(fd);
         ret = PTR_ERR(file);

@@ -290,7 +290,7 @@ long mem_get_module_base2(void __user *arg)
 /* Resolve the full d_path of the first mapped module whose backing filename
  * contains req.name.  Unlike mem_get_module_base (which matches on the bare
  * dentry d_name and returns an address), this returns the directory path so
- * user space can read the embedded package name and tell DFM China/Taiwan/Global
+ * user space can read the embedded package name and tell BS China/Taiwan/Global
  * apart.  Same first-match-wins VMA scan as mem_get_module_base. */
 long mem_get_module_path(void __user *arg)
 {

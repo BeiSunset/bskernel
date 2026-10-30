@@ -10,11 +10,11 @@ if(ANDROID_NATIVE_API_LEVEL LESS 26)
     message(FATAL_ERROR "Use -DANDROID_PLATFORM=android-26 or newer")
 endif()
 
-option(BSKERNEL_BUILD_TOOLS "Build the dfm_loader command-line tool" ON)
+option(BSKERNEL_BUILD_TOOLS "Build the bs_loader command-line tool" ON)
 option(BSKERNEL_BUILD_EXAMPLE "Build the SDK calling example" ON)
 
 # The kernel ABI is the only source of truth, including in installed SDKs.
-configure_file(../abi.h include/dfm/abi.h COPYONLY)
+configure_file(../abi.h include/bs/abi.h COPYONLY)
 
 add_library(bskernel_sdk STATIC src/driver.cpp src/loader.cpp)
 add_library(bskernel::sdk ALIAS bskernel_sdk)
@@ -34,16 +34,16 @@ target_link_libraries(bskernel_sdk PUBLIC log)
 target_link_options(bskernel_sdk INTERFACE "LINKER:-z,max-page-size=16384")
 
 if(BSKERNEL_BUILD_TOOLS)
-    add_executable(dfm_loader tools/dfm_loader.cpp)
-    target_link_libraries(dfm_loader PRIVATE bskernel::sdk)
-    target_compile_options(dfm_loader PRIVATE -Wall -Wextra -Wpedantic)
-    install(TARGETS dfm_loader RUNTIME DESTINATION bin)
+    add_executable(bs_loader tools/bs_loader.cpp)
+    target_link_libraries(bs_loader PRIVATE bskernel::sdk)
+    target_compile_options(bs_loader PRIVATE -Wall -Wextra -Wpedantic)
+    install(TARGETS bs_loader RUNTIME DESTINATION bin)
 endif()
 if(BSKERNEL_BUILD_EXAMPLE)
-    add_executable(dfm_example examples/basic.cpp)
-    target_link_libraries(dfm_example PRIVATE bskernel::sdk)
-    target_compile_options(dfm_example PRIVATE -Wall -Wextra -Wpedantic)
-    install(TARGETS dfm_example RUNTIME DESTINATION bin)
+    add_executable(bs_example examples/basic.cpp)
+    target_link_libraries(bs_example PRIVATE bskernel::sdk)
+    target_compile_options(bs_example PRIVATE -Wall -Wextra -Wpedantic)
+    install(TARGETS bs_example RUNTIME DESTINATION bin)
 endif()
 
 include(CMakePackageConfigHelpers)
@@ -61,6 +61,6 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/bskernelConfigVersion.cmake"
     DESTINATION lib/cmake/bskernel
 )
-install(DIRECTORY include/dfm DESTINATION include)
-install(FILES ../abi.h DESTINATION include/dfm)
+install(DIRECTORY include/bs DESTINATION include)
+install(FILES ../abi.h DESTINATION include/bs)
 install(FILES examples/basic.cpp examples/CMakeLists.txt DESTINATION examples)

@@ -14,14 +14,13 @@ concurrency:
 
 jobs:
   build:
-    name: Build beiluo.ko for ${{ matrix.kmi }}
+    name: Build bs.ko for ${{ matrix.kmi }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         kmi:
-          - android12-5.10
           - android13-5.15
           - android14-6.1
           - android15-6.6
@@ -46,14 +45,14 @@ jobs:
         run: |
           set -euo pipefail
           make -j"$(nproc)" KDIR="${KERNEL_SRC:?KERNEL_SRC is not set}"
-          test -s dfm.ko
+          test -s bs.ko
 
       - name: Prepare kernel artifact
         run: |
           set -euo pipefail
           mkdir -p out
-          output="beiluo-${KMI}.ko"
-          cp dfm.ko "out/$output"
+          output="bs-${KMI}.ko"
+          cp bs.ko "out/$output"
           llvm-strip --strip-debug "out/$output"
           test -s "out/$output"
           cd out
@@ -62,10 +61,10 @@ jobs:
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: beiluo-kernel-${{ matrix.kmi }}
+          name: bs-kernel-${{ matrix.kmi }}
           path: |
-            out/beiluo-${{ matrix.kmi }}.ko
-            out/beiluo-${{ matrix.kmi }}.ko.sha256
+            out/bs-${{ matrix.kmi }}.ko
+            out/bs-${{ matrix.kmi }}.ko.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -124,18 +123,18 @@ jobs:
       - name: Download kernel modules
         uses: actions/download-artifact@v4
         with:
-          pattern: beiluo-kernel-*
+          pattern: bs-kernel-*
           merge-multiple: true
           path: out/bskernel-arm64-v8a/modules
 
       - name: Verify modules and create distribution archive
         run: |
           set -euo pipefail
-          for kmi in android12-5.10 android13-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
-            (cd out/bskernel-arm64-v8a/modules && sha256sum --check "beiluo-$kmi.ko.sha256")
+          for kmi in android13-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
+            (cd out/bskernel-arm64-v8a/modules && sha256sum --check "bs-$kmi.ko.sha256")
           done
           # Artifact ZIPs do not preserve executable permissions; the tarball does.
-          chmod 755 out/bskernel-arm64-v8a/bin/dfm_loader out/bskernel-arm64-v8a/bin/dfm_example
+          chmod 755 out/bskernel-arm64-v8a/bin/bs_loader out/bskernel-arm64-v8a/bin/bs_example
           tar -C out/bskernel-arm64-v8a --exclude=./modules \
             -czf out/bskernel-sdk-arm64-v8a.tar.gz .
           tar -C out -czf out/bskernel-arm64-v8a.tar.gz bskernel-arm64-v8a

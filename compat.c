@@ -18,48 +18,48 @@
 
 #include "compat.h"
 
-unsigned long (*dfm_kallsyms_lookup_name)(const char *name);
-int (*dfm_kallsyms_lookup_size_offset)(unsigned long addr, unsigned long *size,
+unsigned long (*bs_kallsyms_lookup_name)(const char *name);
+int (*bs_kallsyms_lookup_size_offset)(unsigned long addr, unsigned long *size,
 				       unsigned long *offset);
-__typeof__(&close_fd) dfm_close_fd;
-__typeof__(&kern_path) dfm_kern_path;
-__typeof__(&override_creds) dfm_override_creds;
-__typeof__(&revert_creds) dfm_revert_creds;
-__typeof__(&kernel_read) dfm_kernel_read;
-__typeof__(&kernel_write) dfm_kernel_write;
-int (*dfm_task_work_add)(struct task_struct *task,
+__typeof__(&close_fd) bs_close_fd;
+__typeof__(&kern_path) bs_kern_path;
+__typeof__(&override_creds) bs_override_creds;
+__typeof__(&revert_creds) bs_revert_creds;
+__typeof__(&kernel_read) bs_kernel_read;
+__typeof__(&kernel_write) bs_kernel_write;
+int (*bs_task_work_add)(struct task_struct *task,
 			 struct callback_head *work,
 			 enum task_work_notify_mode notify);
-struct file *(*dfm_filp_open)(const char *name, int flags, umode_t mode);
-struct vm_struct *(*dfm_get_vm_area_caller)(unsigned long size,
+struct file *(*bs_filp_open)(const char *name, int flags, umode_t mode);
+struct vm_struct *(*bs_get_vm_area_caller)(unsigned long size,
 					    unsigned long flags,
 					    const void *caller);
-int (*dfm_apply_to_page_range)(struct mm_struct *mm, unsigned long addr,
+int (*bs_apply_to_page_range)(struct mm_struct *mm, unsigned long addr,
 			       unsigned long size, pte_fn_t fn, void *data);
-void (*dfm_free_vm_area)(struct vm_struct *area);
-void (*dfm___sync_icache_dcache)(pte_t pte);
-void (*dfm___set_fixmap)(enum fixed_addresses idx, phys_addr_t phys,
+void (*bs_free_vm_area)(struct vm_struct *area);
+void (*bs___sync_icache_dcache)(pte_t pte);
+void (*bs___set_fixmap)(enum fixed_addresses idx, phys_addr_t phys,
 			 pgprot_t prot);
-long (*dfm_copy_to_kernel_nofault)(void *dst, const void *src, size_t size);
-void (*dfm_dcache_clean_inval_poc)(unsigned long start, unsigned long end);
-int (*dfm_set_security_override_from_ctx)(struct cred *cred, const char *secctx);
-struct file *(*dfm_get_task_exe_file)(struct task_struct *task);
-struct group_info *(*dfm_groups_alloc)(int gidsetsize);
-int (*dfm_groups_search)(const struct group_info *group_info, kgid_t grp);
-void (*dfm_groups_sort)(struct group_info *group_info);
-int (*dfm_set_current_groups)(struct group_info *group_info);
-struct mm_struct *dfm_init_mm;
+long (*bs_copy_to_kernel_nofault)(void *dst, const void *src, size_t size);
+void (*bs_dcache_clean_inval_poc)(unsigned long start, unsigned long end);
+int (*bs_set_security_override_from_ctx)(struct cred *cred, const char *secctx);
+struct file *(*bs_get_task_exe_file)(struct task_struct *task);
+struct group_info *(*bs_groups_alloc)(int gidsetsize);
+int (*bs_groups_search)(const struct group_info *group_info, kgid_t grp);
+void (*bs_groups_sort)(struct group_info *group_info);
+int (*bs_set_current_groups)(struct group_info *group_info);
+struct mm_struct *bs_init_mm;
 
 #define RESOLVE(fn)								\
 	do {									\
-		*(unsigned long *)&dfm_##fn = dfm_kallsyms_lookup_name(#fn);	\
-		if (!dfm_##fn) {						\
+		*(unsigned long *)&bs_##fn = bs_kallsyms_lookup_name(#fn);	\
+		if (!bs_##fn) {						\
 			pr_warn("missing symbol: %s\n", #fn);			\
 			missing++;						\
 		}								\
 	} while (0)
 
-int dfm_compat_init(void)
+int bs_compat_init(void)
 {
 	struct kprobe kp = {
 		.symbol_name = "kallsyms_lookup_name",
@@ -74,9 +74,9 @@ int dfm_compat_init(void)
 		       ret);
 		return ret;
 	}
-	dfm_kallsyms_lookup_name = (void *)kp.addr;
+	bs_kallsyms_lookup_name = (void *)kp.addr;
 	unregister_kprobe(&kp);
-	if (!dfm_kallsyms_lookup_name)
+	if (!bs_kallsyms_lookup_name)
 		return -ENOENT;
 
 	RESOLVE(kallsyms_lookup_size_offset);
@@ -102,9 +102,9 @@ int dfm_compat_init(void)
 	RESOLVE(groups_sort);
 	RESOLVE(set_current_groups);
 
-	addr = dfm_kallsyms_lookup_name("init_mm");
-	dfm_init_mm = (void *)addr;
-	if (!dfm_init_mm) {
+	addr = bs_kallsyms_lookup_name("init_mm");
+	bs_init_mm = (void *)addr;
+	if (!bs_init_mm) {
 		pr_warn("missing symbol: init_mm\n");
 		missing++;
 	}

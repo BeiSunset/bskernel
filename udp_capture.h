@@ -1,5 +1,5 @@
-#ifndef DFM_UDP_CAPTURE_H
-#define DFM_UDP_CAPTURE_H
+#ifndef BS_UDP_CAPTURE_H
+#define BS_UDP_CAPTURE_H
 
 void udp_capture_exit(void);
 long udp_capture_init(void __user *arg);

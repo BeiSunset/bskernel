@@ -1,5 +1,5 @@
-#include <dfm/driver.h>
-#include <dfm/loader.h>
+#include <bs/driver.h>
+#include <bs/loader.h>
 
 #include <cstdio>
 #include <cstring>
@@ -14,11 +14,11 @@ static void usage(const char* program) {
         "       %s --status\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
-        "--status only checks the existing DFM interface; it never loads a module.\n"
+        "--status only checks the existing BS interface; it never loads a module.\n"
         "Exit codes: 0 = ready/help, 1 = load/connection failure, 2 = usage error.\n\n"
         "Device example:\n"
-        "  adb shell su -c '/data/local/tmp/bskernel/bin/dfm_loader'\n"
-        "  adb shell su -c '/data/local/tmp/bskernel/bin/dfm_loader --module /data/local/tmp/dfm.ko'\n",
+        "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'\n"
+        "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader --module /data/local/tmp/bs.ko'\n",
         program, program, program);
 }
 
@@ -55,13 +55,13 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    if (dfm::init()) {
+    if (bs::init()) {
         std::puts("Kernel interface is ready (module already loaded).");
-        dfm::close();
+        bs::close();
         return 0;
     }
     if (status_only) {
-        std::fputs("DFM interface is unavailable.\n", stderr);
+        std::fputs("BS interface is unavailable.\n", stderr);
         return 1;
     }
 
@@ -81,11 +81,11 @@ int main(int argc, char** argv) {
     }
     const bool ready = module ? loader::load_module_file(module, params)
                               : loader::load_module_from_directory(directory, params);
-    dfm::close();
+    bs::close();
     if (!ready) {
-        std::fputs("DFM load failed; see the error above or logcat -s bskernel.\n", stderr);
+        std::fputs("BS load failed; see the error above or logcat -s bskernel.\n", stderr);
         return 1;
     }
-    std::puts("DFM module loaded; subsequent applications should call dfm::init().");
+    std::puts("BS module loaded; subsequent applications should call bs::init().");
     return 0;
 }

@@ -1,5 +1,5 @@
-#ifndef DFM_PROCESS_MEM_H
-#define DFM_PROCESS_MEM_H
+#ifndef BS_PROCESS_MEM_H
+#define BS_PROCESS_MEM_H
 
 #include <linux/types.h>
 
