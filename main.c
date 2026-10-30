@@ -300,9 +300,31 @@ static int __init mod_init(void)
     if (dfm_stage == 3)
         return 0;
 
-    syscall_ret = syscall_hook_init();
-    if (syscall_ret < 0)
-        pr_warn("syscall install hook unavailable: %d\n", syscall_ret);
+    if (dfm_stage == 4) {
+        syscall_ret = syscall_hook_init();
+        if (syscall_ret < 0)
+            pr_warn("syscall install hook unavailable: %d\n", syscall_ret);
+        return 0;
+    }
+
+    if (dfm_stage == 5) {
+        reboot_ret = register_kprobe(&kp_reboot);
+        if (reboot_ret < 0) {
+            pr_warn("failed to register kprobe on reboot: %d\n", reboot_ret);
+            return reboot_ret;
+        }
+        g_reboot_kprobe_registered = 1;
+        return 0;
+    }
+
+    if (dfm_stage == 6) {
+        syscall_ret = -ENOENT;
+        pr_info("skipping syscall hook, using reboot kprobe only\n");
+    } else {
+        syscall_ret = syscall_hook_init();
+        if (syscall_ret < 0)
+            pr_warn("syscall install hook unavailable: %d\n", syscall_ret);
+    }
 
     reboot_ret = register_kprobe(&kp_reboot);
     if (reboot_ret < 0) {
@@ -318,9 +340,6 @@ static int __init mod_init(void)
         mem_core_exit();
         return reboot_ret;
     }
-
-    if (dfm_stage == 4)
-        return 0;
 
     (void)kgsl_hide_init();
 
@@ -354,16 +373,24 @@ static void __exit mod_exit(void)
         return;
     }
     if (dfm_stage == 4) {
-        if (g_reboot_kprobe_registered) {
-            unregister_kprobe(&kp_reboot);
-            g_reboot_kprobe_registered = 0;
-        }
         syscall_hook_exit();
         if (g_file_inited)
             dfm_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
         pr_info("stage4 module unloaded\n");
+        return;
+    }
+    if (dfm_stage == 5) {
+        if (g_reboot_kprobe_registered) {
+            unregister_kprobe(&kp_reboot);
+            g_reboot_kprobe_registered = 0;
+        }
+        if (g_file_inited)
+            dfm_file_io_exit();
+        if (g_mem_inited)
+            mem_core_exit();
+        pr_info("stage5 module unloaded\n");
         return;
     }
 
