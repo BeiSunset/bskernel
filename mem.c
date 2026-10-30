@@ -1101,9 +1101,15 @@ static unsigned long ____phys_to_virt_nc(unsigned long pa)
 #define CONT_PMD_SIZE PMD_SIZE
 #endif
 
-static unsigned long follow_phys_fast(struct mm_struct *mm, unsigned long virt, size_t *sz)
+static unsigned long follow_phys_fast(struct mm_struct *mm, unsigned long virt, size_t *sz,
+                                      unsigned long *attr)
 {
     pgd_t *pgdp = pgd_offset(mm, virt);
+
+    /* Optional leaf attribute (PTE_ATTRINDX_*). Unknown stays ~0UL so the
+     * caller takes the conservative non-cached path. */
+    if (attr)
+        *attr = ~0UL;
 
     if (pgd_none(*pgdp) || pgd_bad(*pgdp))
         return ~0UL;
@@ -1122,6 +1128,8 @@ static unsigned long follow_phys_fast(struct mm_struct *mm, unsigned long virt, 
             return ~0UL;
         if (sz)
             *sz = PUD_SIZE - (virt & ~PUD_MASK);
+        if (attr)
+            *attr = pud_val(*pudp) & PTE_ATTRINDX_MASK;
         return PFN_PHYS(pfn) | (virt & ~PUD_MASK);
     }
 
@@ -1156,6 +1164,8 @@ static unsigned long follow_phys_fast(struct mm_struct *mm, unsigned long virt, 
 
         if (sz)
             *sz = grp_size - offset;
+        if (attr)
+            *attr = pmd_val(*pmdp) & PTE_ATTRINDX_MASK;
         return phys;
     }
 
@@ -1187,6 +1197,8 @@ static unsigned long follow_phys_fast(struct mm_struct *mm, unsigned long virt, 
 
         if (sz)
             *sz = grp_size - offset;
+        if (attr)
+            *attr = pte_val(*ptep) & PTE_ATTRINDX_MASK;
         return phys;
     }
 }
@@ -1206,7 +1218,8 @@ static ssize_t nc_memrw(struct mm_struct *mm, unsigned long addr, char __user *b
 
     while (count > 0) {
         size_t this_len = size_inside_page(addr, count);
-        unsigned long phys = follow_phys_fast(mm, addr, &this_len);
+        unsigned long attr;
+        unsigned long phys = follow_phys_fast(mm, addr, &this_len, &attr);
         unsigned long virt;
         size_t failed_len;
 
@@ -1214,7 +1227,14 @@ static ssize_t nc_memrw(struct mm_struct *mm, unsigned long addr, char __user *b
             break;
 
         this_len = min(this_len, count);
-        virt = ____phys_to_virt_nc(phys);
+        /* MT_NORMAL (WB) pages are coherent through the kernel linear alias:
+         * read them there and skip the per-granule NC rwsem + memblock scan.
+         * Anything else -- NC, device, or an unknown attribute -- stays on
+         * the NC path. */
+        if (attr == PTE_ATTRINDX(MT_NORMAL) && pfn_valid(PFN_DOWN(phys)))
+            virt = (unsigned long)phys_to_virt(phys);
+        else
+            virt = ____phys_to_virt_nc(phys);
         if (!virt)
             break;
 
@@ -1254,19 +1274,28 @@ static ssize_t nc_memrw_cache(struct mm_struct *mm, unsigned long addr, char __u
 
     while (count > 0) {
         size_t this_len = size_inside_page(addr, count);
-        unsigned long phys = follow_phys_fast(mm, addr, &this_len);
+        unsigned long attr;
+        unsigned long phys = follow_phys_fast(mm, addr, &this_len, &attr);
         unsigned long virt;
         size_t failed_len;
+        bool cached;
 
         if (phys == ~0UL)
             break;
 
         this_len = min(this_len, count);
-        virt = ____phys_to_virt_nc(phys);
+        cached = attr == PTE_ATTRINDX(MT_NORMAL) &&
+                 pfn_valid(PFN_DOWN(phys));
+        if (cached)
+            virt = (unsigned long)phys_to_virt(phys);
+        else
+            virt = ____phys_to_virt_nc(phys);
         if (!virt)
             break;
 
-        {
+        if (!cached) {
+            /* The NC alias is not coherent with the target cached view, so
+             * clean the target lines to PoC before reading through it. */
             unsigned long line = dcache_min_line();
             unsigned long c_va = (unsigned long)phys_to_virt(phys);
             unsigned long s = c_va & ~(line - 1);
@@ -1300,7 +1329,7 @@ static ssize_t nc_memread_kernel(struct mm_struct *mm, unsigned long addr, char 
 
     while (count > 0) {
         size_t this_len = size_inside_page(addr, count);
-        unsigned long phys = follow_phys_fast(mm, addr, &this_len);
+        unsigned long phys = follow_phys_fast(mm, addr, &this_len, NULL);
         unsigned long virt;
 
         if (phys == ~0UL)
@@ -1344,10 +1373,19 @@ static ssize_t access_remote_vm_nc(pid_t vpid, unsigned long target, char __user
         goto out;
     }
 
-    /* Pre-fault the caller buffer before taking mmap_lock: faulting inside
-     * copy_*_user() would take this same mmap_lock again when the target is
-     * the caller mm, which can deadlock against a pending writer. Inside the
-     * lock nc_memrw() uses only the non-sleeping __copy_*_user() helpers. */
+    /* Pre-touch the destination pages before taking mmap_lock: a page fault
+     * inside __copy_to_user() would take the same mmap_lock again when the
+     * target is the caller mm and can deadlock against a pending writer. */
+    {
+        size_t tmp;
+
+        for (tmp = 0; tmp < count; tmp += PAGE_SIZE) {
+            if (put_user((char)0, (char __user *)buffer + tmp)) {
+                result = -EFAULT;
+                goto out;
+            }
+        }
+    }
 
     mmap_read_lock(mm);
     result = nc_memrw(mm, target, buffer, count, write);
@@ -1381,7 +1419,17 @@ static ssize_t access_remote_vm_nc_cache(pid_t vpid, unsigned long target, char 
         goto out;
     }
 
-    /* See access_remote_vm_nc(): pre-fault before taking mmap_lock. */
+    /* See access_remote_vm_nc(): pre-touch the destination before the lock. */
+    {
+        size_t tmp;
+
+        for (tmp = 0; tmp < count; tmp += PAGE_SIZE) {
+            if (put_user((char)0, (char __user *)buffer + tmp)) {
+                result = -EFAULT;
+                goto out;
+            }
+        }
+    }
 
     mmap_read_lock(mm);
     result = nc_memrw_cache(mm, target, buffer, count, write);
