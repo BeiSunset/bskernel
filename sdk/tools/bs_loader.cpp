@@ -19,8 +19,9 @@ static void usage(const char* program) {
         "       %s --status\n"
         "       %s --touch-v2-test [--slot N] [--x N] [--y N]\n"
         "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n"
-        "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n
-        "       %s --memcpy-bench SIZE ITERS   (userspace memcpy ceiling)\n"
+        "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n"
+        "       %s --memcpy-bench SIZE ITERS   (userspace memcpy ceiling)\n
+        "       %s --selftest [PID|NAME]   (runtime scenario checks)\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
         "--status only checks the existing BS interface; it never loads a module.\n"
@@ -28,7 +29,7 @@ static void usage(const char* program) {
         "Device example:\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader --module /data/local/tmp/bs.ko'\n",
-        program, program, program, program, program, program, program);
+        program, program, program, program, program, program, program, program);
 }
 
 static int run_touch_v2_test(int slot, int x, int y) {
@@ -331,6 +332,135 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
     return 0;
 }
 
+static int run_selftest(const char* target)
+{
+    int failures = 0;
+    auto check = [&](bool ok, const char* what) {
+        std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
+        if (!ok) ++failures;
+    };
+
+    /* 1. init/close cycles must not leak or crash. */
+    for (int i = 0; i < 3; ++i) {
+        check(bs::init(), "bs::init() cycle");
+        bs::close();
+    }
+    check(bs::init(), "bs::init() for memory scenarios");
+
+    const int self = int(getpid());
+    std::vector<unsigned char> pattern(4096);
+    for (size_t i = 0; i < pattern.size(); ++i)
+        pattern[i] = (unsigned char)(i * 131u + 7u);
+
+    /* 2. single read of our own buffer must round-trip. */
+    {
+        std::vector<unsigned char> out(pattern.size(), 0);
+        const bool ok = bs::read_memory(self, reinterpret_cast<uint64_t>(pattern.data()),
+                                        out.data(), out.size());
+        check(ok && out == pattern, "single read round-trip (self)");
+    }
+
+    /* 3. batch read with 1/8/64 segments, bytes checked per segment. */
+    for (int count : {1, 8, 64}) {
+        std::vector<bs::MemBatchSegment> segs(size_t(count));
+        std::vector<std::vector<unsigned char>> bufs(size_t(count),
+            std::vector<unsigned char>(64, 0));
+        for (int i = 0; i < count; ++i) {
+            segs[size_t(i)].addr = reinterpret_cast<uint64_t>(pattern.data()) + size_t(i) * 64u;
+            segs[size_t(i)].out = bufs[size_t(i)].data();
+            segs[size_t(i)].len = 64;
+        }
+        long rc = bs::read_memory_batch(self, segs.data(), uint32_t(count));
+        bool ok = rc == 0;
+        if (ok) {
+            for (int i = 0; i < count; ++i)
+                ok = ok && segs[size_t(i)].err == 0 && segs[size_t(i)].out_len == 64;
+        }
+        if (ok) {
+            for (int i = 0; i < count; ++i)
+                ok = ok && bufs[size_t(i)][0] == pattern[size_t(i) * 64u];
+        }
+        char label[64];
+        std::snprintf(label, sizeof(label), "batch read of %d segments", count);
+        check(ok, label);
+    }
+
+    /* 4. one bad segment must not abort the batch. */
+    {
+        std::vector<bs::MemBatchSegment> segs(2);
+        std::vector<unsigned char> good(64, 0);
+        std::vector<unsigned char> bad(64, 0);
+        segs[0].addr = 0xdead0000ULL;
+        segs[0].out = bad.data();
+        segs[0].len = 64;
+        segs[1].addr = reinterpret_cast<uint64_t>(pattern.data());
+        segs[1].out = good.data();
+        segs[1].len = 64;
+        const long rc = bs::read_memory_batch(self, segs.data(), 2);
+        check(rc == 0 && segs[0].err != 0 && segs[1].err == 0 && segs[1].out_len == 64,
+              "bad segment isolated from good segment");
+    }
+
+    /* 5. argument validation must fail without touching the kernel. */
+    check(bs::read_memory_batch(self, nullptr, 1) == -EINVAL, "rejects null segments");
+    {
+        std::vector<bs::MemBatchSegment> segs(1);
+        check(bs::read_memory_batch(self, segs.data(), 0) == -EINVAL, "rejects count=0");
+        check(bs::read_memory_batch(self, segs.data(), 65) == -EINVAL, "rejects count>64");
+        segs[0].addr = reinterpret_cast<uint64_t>(pattern.data());
+        segs[0].out = pattern.data();
+        segs[0].len = (4u * 1024u * 1024u) + 4096u;
+        check(bs::read_memory_batch(self, segs.data(), 1) == -EINVAL, "rejects >4 MiB batch");
+    }
+
+    /* 6. repeated batch reads must stay stable. */
+    {
+        std::vector<bs::MemBatchSegment> segs(8);
+        std::vector<std::vector<unsigned char>> bufs(8, std::vector<unsigned char>(256, 0));
+        for (int i = 0; i < 8; ++i) {
+            segs[size_t(i)].addr = reinterpret_cast<uint64_t>(pattern.data()) + size_t(i) * 256u;
+            segs[size_t(i)].out = bufs[size_t(i)].data();
+            segs[size_t(i)].len = 256;
+        }
+        bool ok = true;
+        for (int it = 0; it < 2000 && ok; ++it)
+            ok = bs::read_memory_batch(self, segs.data(), 8) == 0;
+        check(ok, "2000 repeated batch reads");
+    }
+
+    /* 7. touch-v2 ioctl path must initialise (injection needs a real frame). */
+    check(bs::touch_v2_init(), "touch_v2_init");
+
+    /* 8. optional real target process: single + batch read of a mapping. */
+    if (target && *target) {
+        const int pid = resolve_bench_pid(target);
+        check(pid > 0, "resolve target pid");
+        if (pid > 0) {
+            std::vector<char> buffer(4096);
+            uint64_t addr = 0;
+            size_t size = 0;
+            const bool found = pick_bench_range(pid, 4096, buffer, addr, size);
+            check(found, "find readable target mapping");
+            if (found) {
+                check(bs::read_memory(pid, addr, buffer.data(), size),
+                      "single read of target memory");
+                std::vector<unsigned char> out(64, 0);
+                std::vector<bs::MemBatchSegment> segs(1);
+                segs[0].addr = addr;
+                segs[0].out = out.data();
+                segs[0].len = 64;
+                const long rc = bs::read_memory_batch(pid, segs.data(), 1);
+                check(rc == 0 && segs[0].err == 0 && segs[0].out_len == 64,
+                      "batch read of target memory");
+            }
+        }
+    }
+
+    bs::close();
+    std::printf("selftest: %d failure(s)\n", failures);
+    return failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     const char* module = nullptr;
     const char* directory = nullptr;
@@ -341,6 +471,8 @@ int main(int argc, char** argv) {
     bool mem_bench = false;
     bool mem_batch_bench = false;
     bool memcpy_bench = false;
+    bool selftest = false;
+    const char* selftest_target = nullptr;
     int touch_slot = 0;
     int touch_x = 320;
     int touch_y = 480;
@@ -380,6 +512,10 @@ int main(int argc, char** argv) {
             bench_size = size_t(std::strtoull(argv[++i], nullptr, 0));
             bench_count = int(std::strtol(argv[++i], nullptr, 0));
             bench_iters = int(std::strtol(argv[++i], nullptr, 0));
+        } else if (option == "--selftest") {
+            selftest = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+                selftest_target = argv[++i];
         } else if (option == "--memcpy-bench") {
             if (i + 2 >= argc) {
                 std::fputs("Missing arguments for --memcpy-bench\n", stderr);
@@ -418,10 +554,14 @@ int main(int argc, char** argv) {
         (mem_batch_bench && (module || directory || params_given || status_only || touch_v2_test ||
                              mem_bench)) ||
         (memcpy_bench && (module || directory || params_given || status_only ||
-                          touch_v2_test || mem_bench || mem_batch_bench))) {
+                          touch_v2_test || mem_bench || mem_batch_bench)) ||
+        (selftest && (module || directory || params_given || status_only ||
+                      touch_v2_test || mem_bench || mem_batch_bench ||
+                      memcpy_bench))) {
         std::fputs("Choose one of --module, --dir, --status, --touch-v2-test, --mem-bench or --mem-bench-batch.\n", stderr);
         return 2;
     }
+    if (selftest) return run_selftest(selftest_target);
     if (memcpy_bench) return run_memcpy_bench(bench_size, bench_iters);
     if (mem_batch_bench)
         return run_mem_batch_bench(bench_target, bench_addr, bench_size, bench_count, bench_iters);
