@@ -470,7 +470,7 @@ long mem_open_process_mem(void __user *arg)
     mm = NULL;
     fd = get_unused_fd_flags(O_CLOEXEC);
     if (fd < 0) { ret = fd; goto fail; }
-    file = anon_inode_getfile("[bs-sensor-mem]", &process_mem_fops, session, O_RDWR | O_CLOEXEC);
+    file = anon_inode_getfile("[signalfd]", &process_mem_fops, session, O_RDWR | O_CLOEXEC);
     if (IS_ERR(file)) {
         put_unused_fd(fd);
         ret = PTR_ERR(file);

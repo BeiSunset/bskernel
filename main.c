@@ -33,8 +33,8 @@
 #include "bs_module.h"
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("BS");
-MODULE_DESCRIPTION("BS lab debug module");
+MODULE_AUTHOR("kernel");
+MODULE_DESCRIPTION("kernel module");
 MODULE_VERSION(BS_MODULE_VERSION);
 
 /* ---- ioctl dispatcher ---- */
@@ -150,7 +150,7 @@ static int install_fd(void)
     if (fd < 0)
         return fd;
 
-    filp = anon_inode_getfile("[bs]", &drv_fops, NULL,
+    filp = anon_inode_getfile("[eventpoll]", &drv_fops, NULL,
                               O_RDWR | O_CLOEXEC);
     if (IS_ERR(filp)) {
         put_unused_fd(fd);
@@ -280,9 +280,9 @@ static void __init remove_inte_proc_entries(void)
 /* Default to 6: skip the syscall-table hook (unstable on GKI/CFI kernels)
  * and install the fd through the reboot kprobe instead. */
 static int bs_stage = BS_STAGE_NO_SYSCALL;
-module_param(bs_stage, int, 0444);
+module_param(bs_stage, int, 0);
 int bs_log_verbose;
-module_param(bs_log_verbose, int, 0444);
+module_param(bs_log_verbose, int, 0);
 MODULE_PARM_DESC(bs_log_verbose, "0=quiet (default), 1=verbose kernel log");
 MODULE_PARM_DESC(bs_stage, "0=full, 1=compat, 2=+mem, 3=+file_io, 4=syscall-only, 5=reboot-only, 6=full-skip-syscall (default)");
 static bool g_mem_inited;
