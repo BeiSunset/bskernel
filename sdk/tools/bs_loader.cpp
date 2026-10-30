@@ -1,6 +1,7 @@
 #include <bs/driver.h>
 #include <bs/loader.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -106,6 +107,57 @@ static uint64_t pick_bench_address(int pid, size_t size)
     return best;
 }
 
+static bool bench_probe(int pid, uint64_t addr, size_t size,
+                        std::vector<char>& buffer)
+{
+    return bs::read_memory(pid, addr, buffer.data(), size);
+}
+
+/* Walk every readable VMA from largest to smallest and shrink the request
+ * until a block actually reads back, so a sparse or not-yet-faulted mapping
+ * does not turn the benchmark into an EFAULT. */
+static bool pick_bench_range(int pid, size_t want, std::vector<char>& buffer,
+                             uint64_t& out_addr, size_t& out_size)
+{
+    struct Range {
+        uint64_t start;
+        uint64_t len;
+    };
+    std::vector<Range> ranges;
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/%d/maps", pid);
+    FILE* maps = std::fopen(path, "r");
+    if (!maps)
+        return false;
+    char line[512];
+    while (std::fgets(line, sizeof(line), maps)) {
+        unsigned long long start = 0;
+        unsigned long long end = 0;
+        char perms[8] = {0};
+        if (std::sscanf(line, "%llx-%llx %7s", &start, &end, perms) != 3)
+            continue;
+        if (perms[0] != 'r' || end <= start)
+            continue;
+        ranges.push_back({uint64_t(start), uint64_t(end - start)});
+    }
+    std::fclose(maps);
+    std::sort(ranges.begin(), ranges.end(),
+              [](const Range& a, const Range& b) { return a.len > b.len; });
+    for (const auto& range : ranges) {
+        size_t candidate = want;
+        if (candidate > range.len)
+            candidate = size_t(range.len) & ~size_t(0xfff);
+        for (; candidate >= 4096; candidate /= 2) {
+            if (bench_probe(pid, range.start, candidate, buffer)) {
+                out_addr = range.start;
+                out_size = candidate;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static int run_mem_bench(const char* target, uint64_t addr, size_t size, int iters)
 {
     if (size == 0 || size > (4u * 1024u * 1024u) || iters <= 0) {
@@ -118,31 +170,44 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
                     target ? target : "");
         return 1;
     }
-    if (addr == 0) {
-        addr = pick_bench_address(pid, size);
-        if (!addr) {
-            std::printf("no readable mapping of at least %zu bytes in pid %d; "
-                        "try a smaller SIZE\n", size, pid);
-            return 1;
-        }
-    }
     if (!bs::init()) {
         std::fputs("BS interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
-    std::printf("target: pid=%d addr=%#llx size=%zu iters=%d\n",
-                pid, (unsigned long long)addr, size, iters);
     std::vector<char> buffer(size);
+    size_t bench_size = size;
+    if (addr == 0) {
+        if (!pick_bench_range(pid, size, buffer, addr, bench_size)) {
+            std::printf("no readable block in pid %d can satisfy this request; "
+                        "try a smaller SIZE\n", pid);
+            bs::close();
+            return 1;
+        }
+        if (bench_size != size)
+            std::printf("note: largest verified block in pid %d is %zu bytes "
+                        "(requested %zu)\n", pid, bench_size, size);
+    } else {
+        while (bench_size >= 4096 && !bench_probe(pid, addr, bench_size, buffer))
+            bench_size /= 2;
+        if (bench_size < 4096) {
+            std::printf("address %#llx is not readable in pid %d\n",
+                        (unsigned long long)addr, pid);
+            bs::close();
+            return 1;
+        }
+    }
+    std::printf("target: pid=%d addr=%#llx size=%zu iters=%d\n",
+                pid, (unsigned long long)addr, bench_size, iters);
     /* One warm-up call: faults the caller buffer and the NC linearmap. */
-    if (!bs::read_memory(pid, addr, buffer.data(), size)) {
+    if (!bs::read_memory(pid, addr, buffer.data(), bench_size)) {
         std::printf("read_memory(pid=%d, addr=%#llx, size=%zu) failed (ioctl=%ld)\n",
-                    pid, (unsigned long long)addr, size, bs::last_ioctl_result());
+                    pid, (unsigned long long)addr, bench_size, bs::last_ioctl_result());
         bs::close();
         return 1;
     }
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < iters; ++i) {
-        if (!bs::read_memory(pid, addr, buffer.data(), size)) {
+        if (!bs::read_memory(pid, addr, buffer.data(), bench_size)) {
             std::printf("read_memory failed at iteration %d (ioctl=%ld)\n",
                         i, bs::last_ioctl_result());
             bs::close();
@@ -152,7 +217,7 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
     const auto end = std::chrono::steady_clock::now();
     const double total_us = std::chrono::duration<double, std::micro>(end - start).count();
     const double per_call_us = total_us / iters;
-    const double mbps = (double(size) * (double)iters) / total_us;
+    const double mbps = (double(bench_size) * (double)iters) / total_us;
     std::printf("mem_read bench: pid=%d addr=%#llx size=%zu iters=%d\n",
                 pid, (unsigned long long)addr, size, iters);
     std::printf("  per call: %.2f us   throughput: %.1f MB/s\n", per_call_us, mbps);
