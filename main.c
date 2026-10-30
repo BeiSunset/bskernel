@@ -258,6 +258,12 @@ static void __init remove_inte_proc_entries(void)
         remove_proc_entry("inte_status", NULL);
 }
 
+static int dfm_stage = 0;
+module_param(dfm_stage, int, 0444);
+MODULE_PARM_DESC(dfm_stage, "1=compat only, 2=+mem, 3=+file_io, 4=+hooks, 0/5=full");
+static bool g_mem_inited;
+static bool g_file_inited;
+
 static int __init mod_init(void)
 {
     int ret;
@@ -270,18 +276,29 @@ static int __init mod_init(void)
         return ret;
     }
 
+    pr_info("compat ready, stage=%d\n", dfm_stage);
+    if (dfm_stage == 1)
+        return 0;
+
     ret = mem_core_init();
     if (ret < 0) {
         pr_err("mem_core_init failed: %d\n", ret);
         return ret;
     }
+    g_mem_inited = true;
+    if (dfm_stage == 2)
+        return 0;
 
     ret = dfm_file_io_init();
     if (ret < 0) {
         pr_err("dfm_file_io_init failed: %d\n", ret);
+        g_mem_inited = false;
         mem_core_exit();
         return ret;
     }
+    g_file_inited = true;
+    if (dfm_stage == 3)
+        return 0;
 
     syscall_ret = syscall_hook_init();
     if (syscall_ret < 0)
@@ -302,6 +319,9 @@ static int __init mod_init(void)
         return reboot_ret;
     }
 
+    if (dfm_stage == 4)
+        return 0;
+
     (void)kgsl_hide_init();
 
     remove_inte_proc_entries();
@@ -315,6 +335,38 @@ static int __init mod_init(void)
 
 static void __exit mod_exit(void)
 {
+    if (dfm_stage == 1) {
+        pr_info("stage1 module unloaded\n");
+        return;
+    }
+    if (dfm_stage == 2) {
+        if (g_mem_inited)
+            mem_core_exit();
+        pr_info("stage2 module unloaded\n");
+        return;
+    }
+    if (dfm_stage == 3) {
+        if (g_file_inited)
+            dfm_file_io_exit();
+        if (g_mem_inited)
+            mem_core_exit();
+        pr_info("stage3 module unloaded\n");
+        return;
+    }
+    if (dfm_stage == 4) {
+        if (g_reboot_kprobe_registered) {
+            unregister_kprobe(&kp_reboot);
+            g_reboot_kprobe_registered = 0;
+        }
+        syscall_hook_exit();
+        if (g_file_inited)
+            dfm_file_io_exit();
+        if (g_mem_inited)
+            mem_core_exit();
+        pr_info("stage4 module unloaded\n");
+        return;
+    }
+
     kgsl_hide_exit();
     if (g_reboot_kprobe_registered) {
         unregister_kprobe(&kp_reboot);
