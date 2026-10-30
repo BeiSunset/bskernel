@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#include "bs_log.h"
 
 #include <linux/cdev.h>
 #include <linux/cred.h>
@@ -492,7 +493,7 @@ static void touch_note_reject(int reason, const char *path)
 
     /* 只在真“可疑”的拒因(uid 通过后仍被过滤)上落 dmesg, 且限速. */
     if (reason == TOUCH_REJECT_CAPS)
-        pr_warn_ratelimited(
+        bs_warn_ratelimited(
             "touch reject reason=caps uid=%u comm=%s path=%s\n",
             current_uid().val, current->comm, path ? path : "?");
 }
@@ -573,7 +574,7 @@ static int touch_try_patch_file(struct file *file)
         (!touch_test_bit(BTN_TOUCH, idev->keybit) &&
          !touch_test_bit(BTN_TOOL_FINGER, idev->keybit))) {
         touch_note_reject(TOUCH_REJECT_CAPS, path);
-        pr_warn_ratelimited(
+        bs_warn_ratelimited(
             "touch reject reason=btn_touch uid=%u comm=%s path=%s (缺 BTN_TOUCH/BTN_TOOL_FINGER, 疑幻影设备)\n",
             current_uid().val, current->comm, path);
         return 0;
@@ -587,7 +588,7 @@ static int touch_try_patch_file(struct file *file)
 
     patched = kzalloc(sizeof(*patched), GFP_ATOMIC);
     if (!patched) {
-        pr_warn_ratelimited("cannot track patched file, skip %s\n", path);
+        bs_warn_ratelimited("cannot track patched file, skip %s\n", path);
         return -ENOMEM;
     }
 
@@ -639,7 +640,7 @@ static int touch_try_patch_file(struct file *file)
     g_touch_status.last_reject_reason = TOUCH_REJECT_NONE;
 
     touch_stop_read_hook();
-    pr_info("touch proxy installed on %s for %s (absX=[%d,%d] absY=[%d,%d])\n",
+    bs_info("touch proxy installed on %s for %s (absX=[%d,%d] absY=[%d,%d])\n",
             path, current->comm,
             g_touch_status.abs_x_min, g_touch_status.abs_x_max,
             g_touch_status.abs_y_min, g_touch_status.abs_y_max);
@@ -780,7 +781,7 @@ static void touch_restore_all_files(void)
         if (patched->file->f_op == &g_touch_proxy_fops) {
             patched->file->f_op = patched->orig_fops;
         } else {
-            pr_warn("restore skipped: %p f_op changed by other owner\n",
+            bs_warn("restore skipped: %p f_op changed by other owner\n",
                     patched->file);
         }
 

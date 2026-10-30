@@ -82,6 +82,7 @@ BSKernel $VERSION 驱动加载
   sh BSLoaderDriver1.0.sh --list     列出内置的驱动模块
   sh BSLoADERDriver1.0.sh --stage 1     分阶段诊断（1=仅兼容层 2=+内存 3=+文件 4=+hooks）
   sh BSLoaderDriver1.0.sh --no-verify 跳过内置驱动的 sha256 校验
+  sh BSLoaderDriver1.0.sh --verbose   开启内核详细日志（默认静默，仅调试用）
   sh BSLoaderDriver1.0.sh --help     显示本帮助
 
 说明: 驱动已内置在本 .sh 文件内部，运行时自动释放到临时目录，无需解压。
@@ -447,11 +448,13 @@ load_module() {
 AUTO=0
 SKIP_VERIFY=0
 LIST_ONLY=0
+VERBOSE=0
 PARAMS=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --auto|-a) AUTO=1 ;;
         --no-verify|-n) SKIP_VERIFY=1 ;;
+        --verbose|-v) VERBOSE=1 ;;
         --stage)
             shift
             if [ -z "${1:-}" ]; then
@@ -466,6 +469,10 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+if [ "$VERBOSE" -eq 1 ]; then
+    PARAMS="$PARAMS bs_log_verbose=1"
+fi
 
 if [ "$LIST_ONLY" -eq 1 ]; then
     check_environment

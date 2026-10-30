@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#include "bs_log.h"
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -230,7 +231,7 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
 
     if (task_work_add(current, &tw->cb, TWA_RESUME)) {
         kfree(tw);
-        pr_warn("task_work_add failed\n");
+        bs_warn("task_work_add failed\n");
     }
 
     return 0;
@@ -269,6 +270,9 @@ static void __init remove_inte_proc_entries(void)
  * and install the fd through the reboot kprobe instead. */
 static int bs_stage = BS_STAGE_NO_SYSCALL;
 module_param(bs_stage, int, 0444);
+int bs_log_verbose;
+module_param(bs_log_verbose, int, 0444);
+MODULE_PARM_DESC(bs_log_verbose, "0=quiet (default), 1=verbose kernel log");
 MODULE_PARM_DESC(bs_stage, "0=full, 1=compat, 2=+mem, 3=+file_io, 4=syscall-only, 5=reboot-only, 6=full-skip-syscall (default)");
 static bool g_mem_inited;
 static bool g_file_inited;
@@ -285,7 +289,7 @@ static int __init mod_init(void)
 		return ret;
 	}
 
-	pr_info("compat ready, stage=%d\n", bs_stage);
+	bs_info("compat ready, stage=%d\n", bs_stage);
 	if (bs_stage == BS_STAGE_COMPAT)
 		return 0;
 
@@ -310,7 +314,7 @@ static int __init mod_init(void)
 	if (bs_stage == BS_STAGE_SYSCALL) {
 		syscall_ret = syscall_hook_init();
 		if (syscall_ret < 0)
-			pr_warn("syscall install hook unavailable: %d\n",
+			bs_warn("syscall install hook unavailable: %d\n",
 				syscall_ret);
 		return 0;
 	}
@@ -318,7 +322,7 @@ static int __init mod_init(void)
 	if (bs_stage == BS_STAGE_REBOOT) {
 		reboot_ret = register_kprobe(&kp_reboot);
 		if (reboot_ret < 0) {
-			pr_warn("failed to register kprobe on reboot: %d\n",
+			bs_warn("failed to register kprobe on reboot: %d\n",
 				reboot_ret);
 			ret = reboot_ret;
 			goto err_file;
@@ -329,17 +333,17 @@ static int __init mod_init(void)
 
 	if (bs_stage == BS_STAGE_NO_SYSCALL) {
 		syscall_ret = -ENOENT;
-		pr_info("skipping syscall hook, using reboot kprobe only\n");
+		bs_info("skipping syscall hook, using reboot kprobe only\n");
 	} else {
 		syscall_ret = syscall_hook_init();
 		if (syscall_ret < 0)
-			pr_warn("syscall install hook unavailable: %d\n",
+			bs_warn("syscall install hook unavailable: %d\n",
 				syscall_ret);
 	}
 
 	reboot_ret = register_kprobe(&kp_reboot);
 	if (reboot_ret < 0) {
-		pr_warn("failed to register kprobe on reboot: %d\n",
+		bs_warn("failed to register kprobe on reboot: %d\n",
 			reboot_ret);
 	} else {
 		g_reboot_kprobe_registered = 1;
@@ -357,7 +361,7 @@ static int __init mod_init(void)
 
 	kobject_del(&THIS_MODULE->mkobj.kobj);
 
-	pr_info("module loaded, syscall_nr=%d reboot_fallback=%d\n",
+	bs_info("module loaded, syscall_nr=%d reboot_fallback=%d\n",
 		syscall_hook_nr(), g_reboot_kprobe_registered);
 	return 0;
 
@@ -380,13 +384,13 @@ err_mem:
 static void __exit mod_exit(void)
 {
     if (bs_stage == BS_STAGE_COMPAT) {
-        pr_info("stage1 module unloaded\n");
+        bs_info("stage1 module unloaded\n");
         return;
     }
     if (bs_stage == BS_STAGE_MEM) {
         if (g_mem_inited)
             mem_core_exit();
-        pr_info("stage2 module unloaded\n");
+        bs_info("stage2 module unloaded\n");
         return;
     }
     if (bs_stage == BS_STAGE_FILE) {
@@ -394,7 +398,7 @@ static void __exit mod_exit(void)
             bs_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
-        pr_info("stage3 module unloaded\n");
+        bs_info("stage3 module unloaded\n");
         return;
     }
     if (bs_stage == BS_STAGE_SYSCALL) {
@@ -403,7 +407,7 @@ static void __exit mod_exit(void)
             bs_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
-        pr_info("stage4 module unloaded\n");
+        bs_info("stage4 module unloaded\n");
         return;
     }
     if (bs_stage == BS_STAGE_REBOOT) {
@@ -415,7 +419,7 @@ static void __exit mod_exit(void)
             bs_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
-        pr_info("stage5 module unloaded\n");
+        bs_info("stage5 module unloaded\n");
         return;
     }
 
@@ -432,7 +436,7 @@ static void __exit mod_exit(void)
     touch_v2_exit();
     bs_file_io_exit();
     mem_core_exit();
-    pr_info("module unloaded\n");
+    bs_info("module unloaded\n");
 }
 
 module_init(mod_init);

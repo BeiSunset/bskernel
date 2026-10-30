@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": sf_groups: " fmt
+#include "bs_log.h"
 
 #include <linux/cred.h>
 #include <linux/dcache.h>
@@ -167,7 +168,7 @@ long bs_sf_groups_acquire(void __user *arg)
         return -EFAULT;
 
     if (req.out_added)
-        pr_info("tgid=%d tid=%d added=0x%x groups=%u\n",
+        bs_info("tgid=%d tid=%d added=0x%x groups=%u\n",
                 task_tgid_nr(current), task_pid_nr(current), req.out_added,
                 req.out_group_count);
     return 0;

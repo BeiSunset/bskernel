@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": compat: " fmt
+#include "bs_log.h"
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -140,6 +141,6 @@ int bs_compat_init(void)
 		return -ENOENT;
 	}
 
-	pr_info("resolved %zu symbols\n", ARRAY_SIZE(bs_compat_symbols));
+	bs_info("resolved %zu symbols\n", ARRAY_SIZE(bs_compat_symbols));
 	return 0;
 }

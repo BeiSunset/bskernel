@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#include "bs_log.h"
 
 #include <linux/cred.h>
 #include <linux/dcache.h>
@@ -1203,7 +1204,7 @@ static int kgsl_validate_live_idr(struct idr *idr)
 
     node = xa_to_node(head);
     if (!kgsl_xa_node_addr_ok(node)) {
-        pr_warn_ratelimited("kgsl: syncsource IDR layout mismatch (root node pointer out of range), peek disabled\n");
+        bs_warn_ratelimited("kgsl: syncsource IDR layout mismatch (root node pointer out of range), peek disabled\n");
         ret = -EOPNOTSUPP;
         goto out_rcu;
     }
@@ -1221,7 +1222,7 @@ static int kgsl_validate_live_idr(struct idr *idr)
         count > XA_CHUNK_SIZE || nr_values > count ||
         shift >= BITS_PER_LONG || (shift % XA_CHUNK_SHIFT) != 0U ||
         !kgsl_xa_tree_ok(&idr->idr_rt, node, shift)) {
-        pr_warn_ratelimited("kgsl: syncsource IDR layout mismatch, peek disabled\n");
+        bs_warn_ratelimited("kgsl: syncsource IDR layout mismatch, peek disabled\n");
         ret = -EOPNOTSUPP;
     }
 
@@ -1859,7 +1860,7 @@ static bool kgsl_present(void)
 
     for (i = 0; i < ARRAY_SIZE(g_kgsl_hint_symbols); i++) {
         if (kallsyms_lookup_name(g_kgsl_hint_symbols[i])) {
-            pr_info("kgsl detected via %s\n", g_kgsl_hint_symbols[i]);
+            bs_info("kgsl detected via %s\n", g_kgsl_hint_symbols[i]);
             return true;
         }
     }
@@ -1871,25 +1872,25 @@ int kgsl_hide_init(void)
     int ret;
 
     if (!kgsl_present()) {
-        pr_info("kgsl not present; hide disabled\n");
+        bs_info("kgsl not present; hide disabled\n");
         return 0;
     }
 
     ret = register_kprobe(&g_kp_kca);
     if (ret)
-        pr_warn("register_kprobe kobject_create_and_add failed: %d\n", ret);
+        bs_warn("register_kprobe kobject_create_and_add failed: %d\n", ret);
     else
         g_kca_ok = true;
 
     ret = register_kprobe(&g_kp_kia);
     if (ret)
-        pr_warn("register_kprobe kobject_init_and_add failed: %d\n", ret);
+        bs_warn("register_kprobe kobject_init_and_add failed: %d\n", ret);
     else
         g_kia_ok = true;
 
     ret = register_kprobe(&g_kp_dcd);
     if (ret)
-        pr_warn("register_kprobe debugfs_create_dir failed: %d\n", ret);
+        bs_warn("register_kprobe debugfs_create_dir failed: %d\n", ret);
     else
         g_dcd_ok = true;
 
@@ -1898,7 +1899,7 @@ int kgsl_hide_init(void)
         return -ENOENT;
     }
 
-    pr_info("kgsl hide armed: kca=%d kia=%d dcd=%d\n",
+    bs_info("kgsl hide armed: kca=%d kia=%d dcd=%d\n",
             g_kca_ok, g_kia_ok, g_dcd_ok);
     return 0;
 }

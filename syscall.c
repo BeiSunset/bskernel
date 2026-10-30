@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#include "bs_log.h"
 
 #ifndef __aarch64__
 #error "BS kernel module requires ARM64"
@@ -258,7 +259,7 @@ int syscall_hook_init(void)
 
         g_orig_syscall = ni_syscall;
         g_hooked_nr = i;
-        pr_info("syscall install hook registered at nr %d\n", g_hooked_nr);
+        bs_info("syscall install hook registered at nr %d\n", g_hooked_nr);
         return 0;
     }
 
@@ -281,7 +282,7 @@ void syscall_hook_exit(void)
         ret = syscall_patch_table(g_hooked_nr, g_orig_syscall);
         if (!ret)
             break;
-        pr_warn("restore syscall nr %d failed (attempt %d/3): %d\n",
+        bs_warn("restore syscall nr %d failed (attempt %d/3): %d\n",
                 g_hooked_nr, attempt, ret);
     }
 
@@ -291,7 +292,7 @@ void syscall_hook_exit(void)
         return;
     }
 
-    pr_info("syscall install hook restored nr %d\n", g_hooked_nr);
+    bs_info("syscall install hook restored nr %d\n", g_hooked_nr);
     g_hooked_nr = -1;
     g_orig_syscall = NULL;
     module_put(THIS_MODULE);

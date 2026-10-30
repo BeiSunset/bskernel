@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": touch-v2: " fmt
+#include "bs_log.h"
 
 #include <linux/atomic.h>
 #include <linux/errno.h>
@@ -81,7 +82,7 @@ static bool touch_v2_make_room_locked(unsigned int needed)
         g_touch_v2_event_count = 0;
         memset(g_touch_v2_slot_active, 0,
                sizeof(g_touch_v2_slot_active));
-        pr_warn_ratelimited("event pool full; stale batch discarded\n");
+        bs_warn_ratelimited("event pool full; stale batch discarded\n");
         return true;
     }
 
@@ -182,8 +183,9 @@ static void touch_v2_flush_workfn(struct work_struct *work)
 
         g_touch_v2_injected_batches++;
         g_touch_v2_injected_events += n;
-        pr_info_ratelimited("injected %u events (batch %lu, dev=%s)\n",
-                            n, g_touch_v2_injected_batches, dev->name);
+        bs_info_ratelimited("injected %u events (batch %lu, dev=%s, ctx=%s/%d)\n",
+                            n, g_touch_v2_injected_batches, dev->name,
+                    current->comm, current->pid);
     }
 
     spin_lock_irqsave(&g_touch_v2_pool_lock, flags);
@@ -261,7 +263,7 @@ static int touch_v2_register_hooks_locked(void)
     if (!event_ret)
         g_touch_v2_input_event_registered = true;
     else
-        pr_warn("register input_event kprobe failed: %d\n", event_ret);
+        bs_warn("register input_event kprobe failed: %d\n", event_ret);
 
     memset(&g_touch_v2_input_inject_event_kp, 0,
            sizeof(g_touch_v2_input_inject_event_kp));
@@ -272,7 +274,7 @@ static int touch_v2_register_hooks_locked(void)
     if (!inject_ret)
         g_touch_v2_input_inject_event_registered = true;
     else
-        pr_warn("register input_inject_event kprobe failed: %d\n",
+        bs_warn("register input_inject_event kprobe failed: %d\n",
                 inject_ret);
 
     /* Real panel drivers report through input_event(), so that probe is the
@@ -287,7 +289,7 @@ static int touch_v2_register_hooks_locked(void)
         return event_ret ? event_ret : -ENOENT;
     }
 
-    pr_info("event-pool hooks ready input_event=%d input_inject_event=%d\n",
+    bs_info("event-pool hooks ready input_event=%d input_inject_event=%d\n",
             g_touch_v2_input_event_registered ? 1 : 0,
             g_touch_v2_input_inject_event_registered ? 1 : 0);
     return 0;

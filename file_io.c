@@ -1,4 +1,5 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": file_io: " fmt
+#include "bs_log.h"
 
 #include <linux/cred.h>
 #include <linux/err.h>
@@ -335,7 +336,7 @@ int bs_file_io_init(void)
     }
 
     g_file_cred = cred;
-    pr_info("file I/O context: %s\n", secctx);
+    bs_info("file I/O context: %s\n", secctx);
     return 0;
 }
 
