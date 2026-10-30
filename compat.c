@@ -19,6 +19,49 @@
 #include "compat.h"
 
 /*
+ * Runtime-resolved kernel interfaces (see compat.h).
+ *
+ * These pointer objects must live in the module: bs_compat_init() fills them
+ * with addresses looked up through kallsyms, so the module carries no
+ * undefined references to non-exported GKI symbols.  Dropping these
+ * definitions turns every bs_* name back into an undefined symbol and insmod
+ * fails with "Unknown symbol bs_..." on Android GKI kernels.
+ */
+unsigned long (*bs_kallsyms_lookup_name)(const char *name);
+int (*bs_kallsyms_lookup_size_offset)(unsigned long addr, unsigned long *size,
+				       unsigned long *offset);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+__typeof__(&close_fd) bs_close_fd;
+#endif
+__typeof__(&kern_path) bs_kern_path;
+__typeof__(&override_creds) bs_override_creds;
+__typeof__(&revert_creds) bs_revert_creds;
+__typeof__(&kernel_read) bs_kernel_read;
+__typeof__(&kernel_write) bs_kernel_write;
+int (*bs_task_work_add)(struct task_struct *task,
+			 struct callback_head *work,
+			 enum task_work_notify_mode notify);
+struct file *(*bs_filp_open)(const char *name, int flags, umode_t mode);
+struct vm_struct *(*bs_get_vm_area_caller)(unsigned long size,
+					    unsigned long flags,
+					    const void *caller);
+int (*bs_apply_to_page_range)(struct mm_struct *mm, unsigned long addr,
+			       unsigned long size, pte_fn_t fn, void *data);
+void (*bs_free_vm_area)(struct vm_struct *area);
+void (*bs___sync_icache_dcache)(pte_t pte);
+void (*bs___set_fixmap)(enum fixed_addresses idx, phys_addr_t phys,
+			 pgprot_t prot);
+long (*bs_copy_to_kernel_nofault)(void *dst, const void *src, size_t size);
+void (*bs_dcache_clean_inval_poc)(unsigned long start, unsigned long end);
+int (*bs_set_security_override_from_ctx)(struct cred *cred, const char *secctx);
+struct file *(*bs_get_task_exe_file)(struct task_struct *task);
+struct group_info *(*bs_groups_alloc)(int gidsetsize);
+int (*bs_groups_search)(const struct group_info *group_info, kgid_t grp);
+void (*bs_groups_sort)(struct group_info *group_info);
+int (*bs_set_current_groups)(struct group_info *group_info);
+struct mm_struct *bs_init_mm;
+
+/*
  * Central symbol table.  Adding a new runtime dependency only requires one
  * entry here plus the matching declaration/macro in compat.h.  Version
  * guards stay next to the entry they apply to instead of being scattered
