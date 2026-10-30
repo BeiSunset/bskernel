@@ -24,6 +24,10 @@
 #define TOUCH_V2_MAX_SLOTS  10
 #define TOUCH_V2_MAX_EVENTS 1024
 #define TOUCH_V2_TRACKING_BASE 666
+/* Largest batch still spliced into the real frame from the kprobe handler;
+ * bigger batches fall back to the workqueue instead of extending the
+ * IRQ-disabled window. */
+#define TOUCH_V2_INLINE_MAX 32
 
 struct touch_v2_cached_event {
     unsigned int type;
@@ -198,6 +202,45 @@ static void touch_v2_flush_workfn(struct work_struct *work)
     kfree(batch);
 }
 
+/* Fast path: splice the pool into the real frame while the panel''s
+ * SYN_REPORT is still being processed. This keeps aiming frame-accurate:
+ * the events are emitted before the real SYN reaches the input core, so they
+ * belong to the same input frame (no extra frame, no scheduling delay).
+ * Only the pool lock is taken, and only to copy the batch out; input_event()
+ * itself runs without it. */
+static bool touch_v2_flush_inline(struct input_dev *dev)
+{
+    struct touch_v2_cached_event batch[TOUCH_V2_INLINE_MAX];
+    unsigned int n;
+    unsigned int i;
+    unsigned long flags;
+
+    if (READ_ONCE(g_touch_v2_injecting))
+        return true;
+
+    spin_lock_irqsave(&g_touch_v2_pool_lock, flags);
+    n = g_touch_v2_event_count;
+    if (n == 0 || n > TOUCH_V2_INLINE_MAX) {
+        spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
+        return false;
+    }
+    memcpy(batch, g_touch_v2_events, n * sizeof(*batch));
+    g_touch_v2_event_count = 0;
+    spin_unlock_irqrestore(&g_touch_v2_pool_lock, flags);
+
+    g_touch_v2_injecting = true;
+    for (i = 0; i < n; ++i)
+        input_event(dev, batch[i].type, batch[i].code, batch[i].value);
+    g_touch_v2_injecting = false;
+
+    g_touch_v2_injected_batches++;
+    g_touch_v2_injected_events += n;
+    bs_info_ratelimited("injected %u events inline (batch %lu, dev=%s, ctx=%s/%d)\n",
+                        n, g_touch_v2_injected_batches, dev->name,
+                        current->comm, current->pid);
+    return true;
+}
+
 static void touch_v2_schedule_flush(struct input_dev *dev)
 {
     unsigned long flags;
@@ -228,8 +271,10 @@ static int touch_v2_input_event_pre(struct kprobe *p, struct pt_regs *regs)
     unsigned int type = (unsigned int)regs->regs[1];
     unsigned int code = (unsigned int)regs->regs[2];
 
-    if (type == EV_SYN && code == SYN_REPORT)
-        touch_v2_schedule_flush(dev);
+    if (type == EV_SYN && code == SYN_REPORT) {
+        if (!touch_v2_flush_inline(dev))
+            touch_v2_schedule_flush(dev);
+    }
     return 0;
 }
 
@@ -241,8 +286,10 @@ static int touch_v2_input_inject_event_pre(struct kprobe *p,
     unsigned int type = (unsigned int)regs->regs[1];
     unsigned int code = (unsigned int)regs->regs[2];
 
-    if (handle && type == EV_SYN && code == SYN_REPORT)
-        touch_v2_schedule_flush(handle->dev);
+    if (handle && type == EV_SYN && code == SYN_REPORT) {
+        if (!touch_v2_flush_inline(handle->dev))
+            touch_v2_schedule_flush(handle->dev);
+    }
     return 0;
 }
 
