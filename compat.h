@@ -3,7 +3,6 @@
 
 #include <linux/version.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 
 #include <linux/types.h>
 #include <linux/kprobes.h>
@@ -26,7 +25,9 @@ extern unsigned long (*bs_kallsyms_lookup_name)(const char *name);
 extern int (*bs_kallsyms_lookup_size_offset)(unsigned long addr,
                                               unsigned long *size,
                                               unsigned long *offset);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 extern __typeof__(&close_fd) bs_close_fd;
+#endif
 extern __typeof__(&kern_path) bs_kern_path;
 extern __typeof__(&override_creds) bs_override_creds;
 extern __typeof__(&revert_creds) bs_revert_creds;
@@ -66,7 +67,9 @@ int bs_compat_init(void);
 
 #define kallsyms_lookup_name bs_kallsyms_lookup_name
 #define kallsyms_lookup_size_offset (*bs_kallsyms_lookup_size_offset)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 #define close_fd (*bs_close_fd)
+#endif
 #define kern_path (*bs_kern_path)
 #define override_creds (*bs_override_creds)
 #define revert_creds (*bs_revert_creds)
@@ -89,8 +92,5 @@ int bs_compat_init(void);
 #define set_current_groups (*bs_set_current_groups)
 #define init_mm (*bs_init_mm)
 
-#else
-int bs_compat_init(void);
-#endif
 
 #endif /* BS_COMPAT_H */

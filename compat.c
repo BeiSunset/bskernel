@@ -20,12 +20,13 @@
 
 #include <linux/version.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 
 unsigned long (*bs_kallsyms_lookup_name)(const char *name);
 int (*bs_kallsyms_lookup_size_offset)(unsigned long addr, unsigned long *size,
 				       unsigned long *offset);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 __typeof__(&close_fd) bs_close_fd;
+#endif
 __typeof__(&kern_path) bs_kern_path;
 __typeof__(&override_creds) bs_override_creds;
 __typeof__(&revert_creds) bs_revert_creds;
@@ -84,7 +85,9 @@ int bs_compat_init(void)
 		return -ENOENT;
 
 	RESOLVE(kallsyms_lookup_size_offset);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 	RESOLVE(close_fd);
+#endif
 	RESOLVE(kern_path);
 	RESOLVE(override_creds);
 	RESOLVE(revert_creds);
@@ -98,7 +101,9 @@ int bs_compat_init(void)
 	RESOLVE(__sync_icache_dcache);
 	RESOLVE(__set_fixmap);
 	RESOLVE(copy_to_kernel_nofault);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
 	RESOLVE(dcache_clean_inval_poc);
+#endif
 	RESOLVE(set_security_override_from_ctx);
 	RESOLVE(get_task_exe_file);
 	RESOLVE(groups_alloc);
@@ -121,9 +126,3 @@ int bs_compat_init(void)
 	return 0;
 }
 
-#else
-int bs_compat_init(void)
-{
-	return 0;
-}
-#endif
