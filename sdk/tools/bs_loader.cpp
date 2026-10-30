@@ -17,7 +17,7 @@ static void usage(const char* program) {
         "Usage: %s [--module FILE | --dir DIRECTORY] [--params STRING]\n"
         "       %s --status\n"
         "       %s --touch-v2-test [--slot N] [--x N] [--y N]\n"
-        "       %s --mem-bench PID ADDR SIZE ITERS\n"
+        "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
         "--status only checks the existing BS interface; it never loads a module.\n"
@@ -60,16 +60,78 @@ static int run_touch_v2_test(int slot, int x, int y) {
     return 0;
 }
 
-static int run_mem_bench(int pid, uint64_t addr, size_t size, int iters)
+static int resolve_bench_pid(const char* target)
+{
+    if (!target || !*target)
+        return -1;
+    bool numeric = true;
+    for (const char* p = target; *p; ++p) {
+        if (*p < '0' || *p > '9') {
+            numeric = false;
+            break;
+        }
+    }
+    if (numeric)
+        return int(std::strtol(target, nullptr, 10));
+    return bs::get_process_id(target);
+}
+
+static uint64_t pick_bench_address(int pid, size_t size)
+{
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/%d/maps", pid);
+    FILE* maps = std::fopen(path, "r");
+    if (!maps)
+        return 0;
+    char line[512];
+    unsigned long long best = 0;
+    unsigned long long best_len = 0;
+    while (std::fgets(line, sizeof(line), maps)) {
+        unsigned long long start = 0;
+        unsigned long long end = 0;
+        char perms[8] = {0};
+        if (std::sscanf(line, "%llx-%llx %7s", &start, &end, perms) != 3)
+            continue;
+        if (perms[0] != 'r')
+            continue;
+        const unsigned long long len = end > start ? end - start : 0;
+        if (len < size)
+            continue;
+        if (len > best_len) {
+            best_len = len;
+            best = start;
+        }
+    }
+    std::fclose(maps);
+    return best;
+}
+
+static int run_mem_bench(const char* target, uint64_t addr, size_t size, int iters)
 {
     if (size == 0 || size > (4u * 1024u * 1024u) || iters <= 0) {
-        std::fputs("usage: --mem-bench PID ADDR SIZE ITERS (size <= 4 MiB)\n", stderr);
+        std::fputs("usage: --mem-bench PID|NAME ADDR SIZE ITERS (ADDR=0 auto, size <= 4 MiB)\n", stderr);
         return 2;
+    }
+    const int pid = resolve_bench_pid(target);
+    if (pid <= 0) {
+        std::printf("cannot resolve target '%s' (give a PID or an exact process name)\n",
+                    target ? target : "");
+        return 1;
+    }
+    if (addr == 0) {
+        addr = pick_bench_address(pid, size);
+        if (!addr) {
+            std::printf("no readable mapping of at least %zu bytes in pid %d; "
+                        "try a smaller SIZE\n", size, pid);
+            return 1;
+        }
     }
     if (!bs::init()) {
         std::fputs("BS interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
+    std::printf("target: pid=%d addr=%#llx size=%zu iters=%d\n",
+                pid, (unsigned long long)addr, size, iters);
     std::vector<char> buffer(size);
     /* One warm-up call: faults the caller buffer and the NC linearmap. */
     if (!bs::read_memory(pid, addr, buffer.data(), size)) {
@@ -110,7 +172,7 @@ int main(int argc, char** argv) {
     int touch_slot = 0;
     int touch_x = 320;
     int touch_y = 480;
-    int bench_pid = 0;
+    const char* bench_target = nullptr;
     uint64_t bench_addr = 0;
     size_t bench_size = 0;
     int bench_iters = 0;
@@ -130,7 +192,7 @@ int main(int argc, char** argv) {
                 return 2;
             }
             mem_bench = true;
-            bench_pid = int(std::strtol(argv[++i], nullptr, 0));
+            bench_target = argv[++i];
             bench_addr = std::strtoull(argv[++i], nullptr, 0);
             bench_size = size_t(std::strtoull(argv[++i], nullptr, 0));
             bench_iters = int(std::strtol(argv[++i], nullptr, 0));
@@ -164,7 +226,7 @@ int main(int argc, char** argv) {
         std::fputs("Choose one of --module, --dir, --status, --touch-v2-test or --mem-bench.\n", stderr);
         return 2;
     }
-    if (mem_bench) return run_mem_bench(bench_pid, bench_addr, bench_size, bench_iters);
+    if (mem_bench) return run_mem_bench(bench_target, bench_addr, bench_size, bench_iters);
     if (touch_v2_test) return run_touch_v2_test(touch_slot, touch_x, touch_y);
 
     if (bs::init()) {
