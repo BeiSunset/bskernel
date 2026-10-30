@@ -148,12 +148,17 @@ static bool pick_bench_range(int pid, size_t want, std::vector<char>& buffer,
         size_t candidate = want;
         if (candidate > range.len)
             candidate = size_t(range.len) & ~size_t(0xfff);
-        for (; candidate >= 4096; candidate /= 2) {
+        /* Halving a non power-of-two block size can step straight past 4096,
+         * so force a final 4 KiB probe instead of silently skipping the range. */
+        while (candidate >= 4096) {
             if (bench_probe(pid, range.start, candidate, buffer)) {
                 out_addr = range.start;
                 out_size = candidate;
                 return true;
             }
+            if (candidate == 4096)
+                break;
+            candidate = (candidate / 2 < 4096) ? 4096 : candidate / 2;
         }
     }
     return false;
@@ -220,7 +225,7 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
     const double per_call_us = total_us / iters;
     const double mbps = (double(bench_size) * (double)iters) / total_us;
     std::printf("mem_read bench: pid=%d addr=%#llx size=%zu iters=%d\n",
-                pid, (unsigned long long)addr, size, iters);
+                pid, (unsigned long long)addr, bench_size, iters);
     std::printf("  per call: %.2f us   throughput: %.1f MB/s\n", per_call_us, mbps);
     std::printf("  total: %.1f ms\n", total_us / 1000.0);
     bs::close();
@@ -254,17 +259,17 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
             return 1;
         }
         if (bench_size != size) {
-            std::printf("note: largest verified block is %zu bytes (requested %zu)\n",
-                        bench_size, size);
-            bs::close();
-            return 1;
+            std::printf("note: largest verified block is %zu bytes (requested %zu), "
+                        "using it\n", bench_size, size);
+            while (count > 1 && size_t(count) * bench_size > MEM_BATCH_MAX_BYTES)
+                --count;
         }
     }
     std::vector<bs::MemBatchSegment> segments(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) {
         segments[size_t(i)].addr = addr;
         segments[size_t(i)].out = buffer.data();
-        segments[size_t(i)].len = uint32_t(size);
+        segments[size_t(i)].len = uint32_t(bench_size);
     }
     long result = bs::read_memory_batch(pid, segments.data(), uint32_t(count));
     if (result != 0) {
@@ -291,9 +296,9 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
     const double total_us = std::chrono::duration<double, std::micro>(end - start).count();
     const double per_call_us = total_us / iters;
     const double per_segment_us = per_call_us / count;
-    const double mbps = (double(size) * double(count) * iters) / total_us;
+    const double mbps = (double(bench_size) * double(count) * iters) / total_us;
     std::printf("mem_read_batch bench: pid=%d addr=%#llx seg=%zu count=%d iters=%d\n",
-                pid, (unsigned long long)addr, size, count, iters);
+                pid, (unsigned long long)addr, bench_size, count, iters);
     std::printf("  per ioctl: %.2f us   per segment: %.2f us   throughput: %.1f MB/s\n",
                 per_call_us, per_segment_us, mbps);
     std::printf("  syscalls used: %d (single-read equivalent: %d)\n",
