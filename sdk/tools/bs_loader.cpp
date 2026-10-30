@@ -20,7 +20,7 @@ static void usage(const char* program) {
         "       %s --touch-v2-test [--slot N] [--x N] [--y N]\n"
         "       %s --mem-bench PID|NAME ADDR SIZE ITERS   (ADDR=0 picks a mapping)\n"
         "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n"
-        "       %s --memcpy-bench SIZE ITERS   (userspace memcpy ceiling)\n
+        "       %s --memcpy-bench SIZE ITERS   (userspace memcpy ceiling)\n"
         "       %s --selftest [PID|NAME]   (runtime scenario checks)\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
@@ -362,7 +362,7 @@ static int run_selftest(const char* target)
 
     /* 3. batch read with 1/8/64 segments, bytes checked per segment. */
     for (int count : {1, 8, 64}) {
-        std::vector<bs::MemBatchSegment> segs(size_t(count));
+        std::vector<bs::MemBatchSegment> segs(static_cast<size_t>(count));
         std::vector<std::vector<unsigned char>> bufs(size_t(count),
             std::vector<unsigned char>(64, 0));
         for (int i = 0; i < count; ++i) {
