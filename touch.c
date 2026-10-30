@@ -586,7 +586,7 @@ static int touch_try_patch_file(struct file *file)
     list_for_each_entry(iter, &g_touch_patched_files, node) {
         if (iter->file == file) {
             spin_unlock_irqrestore(&g_touch_patch_lock, flags);
-            put_file(file);
+            fput(file);
             kfree(patched);
             return 0;
         }
@@ -772,7 +772,7 @@ static void touch_restore_all_files(void)
                     patched->file);
         }
 
-        put_file(patched->file);
+        fput(patched->file);
         kfree(patched);
     }
 }
