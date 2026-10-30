@@ -266,8 +266,13 @@ static ssize_t touch_read_proxy(struct file *file, char __user *buf,
     int i;
     ssize_t ret;
     size_t copy_size;
+    size_t max_copy;
 
     if (!client || !g_touch_orig_read)
+        return -EINVAL;
+
+    /* evdev semantics: a buffer smaller than one input_event is invalid. */
+    if (count < sizeof(struct input_event))
         return -EINVAL;
 
     mutex_lock(&g_touch_lock);
@@ -412,6 +417,13 @@ static ssize_t touch_read_proxy(struct file *file, char __user *buf,
 
     touch_append_event(&g_touch_final_events, time_template, EV_SYN, SYN_REPORT, 0);
     copy_size = (size_t)g_touch_final_events.count * sizeof(struct input_event);
+
+    /* Never write past the caller buffer and never split an input_event:
+     * round the limit down to a whole number of events. */
+    max_copy = count - (count % sizeof(struct input_event));
+    if (copy_size > max_copy)
+        copy_size = max_copy;
+
     mutex_unlock(&g_touch_lock);
 
     if (copy_to_user(buf, g_touch_final_events.events, copy_size))

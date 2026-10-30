@@ -1195,6 +1195,12 @@ static ssize_t nc_memrw(struct mm_struct *mm, unsigned long addr, char __user *b
 {
     ssize_t copied = 0;
 
+    /* Writes through the NC alias bypass every VMA permission and COW check
+     * and would be arbitrary physical memory writes. No caller needs them
+     * (access_remote_vm_nc* always pass write=0), so fail closed. */
+    if (write)
+        return -EOPNOTSUPP;
+
     while (count > 0) {
         size_t this_len = size_inside_page(addr, count);
         unsigned long phys = follow_phys_fast(mm, addr, &this_len);
@@ -1209,18 +1215,10 @@ static ssize_t nc_memrw(struct mm_struct *mm, unsigned long addr, char __user *b
         if (!virt)
             break;
 
-        if (!write) {
-            failed_len = __copy_to_user(buf, (void *)virt, this_len);
-            if (failed_len) {
-                copied += this_len - failed_len;
-                break;
-            }
-        } else {
-            failed_len = __copy_from_user((void *)virt, buf, this_len);
-            if (failed_len) {
-                copied += this_len - failed_len;
-                break;
-            }
+        failed_len = __copy_to_user(buf, (void *)virt, this_len);
+        if (failed_len) {
+            copied += this_len - failed_len;
+            break;
         }
 
         buf += this_len;
@@ -1246,6 +1244,10 @@ static ssize_t nc_memrw_cache(struct mm_struct *mm, unsigned long addr, char __u
                               size_t count, int write)
 {
     ssize_t copied = 0;
+
+    /* See nc_memrw(): never expose the write direction of the NC alias. */
+    if (write)
+        return -EOPNOTSUPP;
 
     while (count > 0) {
         size_t this_len = size_inside_page(addr, count);
@@ -1273,18 +1275,10 @@ static ssize_t nc_memrw_cache(struct mm_struct *mm, unsigned long addr, char __u
             asm volatile("dsb sy" : : : "memory");
         }
 
-        if (!write) {
-            failed_len = __copy_to_user(buf, (void *)virt, this_len);
-            if (failed_len) {
-                copied += this_len - failed_len;
-                break;
-            }
-        } else {
-            failed_len = __copy_from_user((void *)virt, buf, this_len);
-            if (failed_len) {
-                copied += this_len - failed_len;
-                break;
-            }
+        failed_len = __copy_to_user(buf, (void *)virt, this_len);
+        if (failed_len) {
+            copied += this_len - failed_len;
+            break;
         }
 
         buf += this_len;

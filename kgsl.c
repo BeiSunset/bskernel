@@ -13,6 +13,7 @@
 #include <linux/kobject.h>
 #include <linux/kprobes.h>
 #include <linux/limits.h>
+#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/ptrace.h>
@@ -26,6 +27,7 @@
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/uidgid.h>
+#include <linux/vmalloc.h>
 #include <linux/xarray.h>
 
 #include "abi.h"
@@ -1065,6 +1067,91 @@ out_unlock:
     return ret;
 }
 
+#define KGSL_XA_MAX_NODES   8U
+#define KGSL_XA_MAX_DEPTH   3U
+
+static bool kgsl_xa_node_addr_ok(const void *p)
+{
+    unsigned long addr = (unsigned long)p;
+
+    if (!addr || !IS_ALIGNED(addr, __alignof__(struct xa_node)))
+        return false;
+    return is_vmalloc_addr(p) || virt_addr_valid(addr);
+}
+
+static bool kgsl_xa_node_shape_ok(struct xa_node *node,
+                                  struct xarray *array,
+                                  struct xa_node *parent,
+                                  u8 shift, u8 offset)
+{
+    struct xa_node *got_parent;
+    struct xarray *got_array;
+    u8 got_shift;
+    u8 got_offset;
+    u8 got_count;
+    u8 got_nr_values;
+
+    if (!kgsl_xa_node_addr_ok(node))
+        return false;
+    if (copy_from_kernel_nofault(&got_parent, &node->parent,
+                                 sizeof(got_parent)) ||
+        copy_from_kernel_nofault(&got_array, &node->array,
+                                 sizeof(got_array)) ||
+        copy_from_kernel_nofault(&got_shift, &node->shift,
+                                 sizeof(got_shift)) ||
+        copy_from_kernel_nofault(&got_offset, &node->offset,
+                                 sizeof(got_offset)) ||
+        copy_from_kernel_nofault(&got_count, &node->count,
+                                 sizeof(got_count)) ||
+        copy_from_kernel_nofault(&got_nr_values, &node->nr_values,
+                                 sizeof(got_nr_values)))
+        return false;
+
+    if (got_parent != parent || got_array != array)
+        return false;
+    if (got_shift != shift || got_offset != offset)
+        return false;
+    return got_count <= XA_CHUNK_SIZE && got_nr_values <= got_count;
+}
+
+static bool kgsl_xa_subtree_ok(struct xarray *array, struct xa_node *node,
+                               struct xa_node *parent, u8 shift, u8 offset,
+                               unsigned int depth, unsigned int *budget)
+{
+    void *entry;
+    unsigned int i;
+
+    if (!budget || !*budget || depth > KGSL_XA_MAX_DEPTH)
+        return false;
+    if (!kgsl_xa_node_shape_ok(node, array, parent, shift, offset))
+        return false;
+    (*budget)--;
+
+    for (i = 0; i < XA_CHUNK_SIZE; i++) {
+        if (copy_from_kernel_nofault(&entry, &node->slots[i],
+                                     sizeof(entry)))
+            return false;
+        if (!entry || !xa_is_node(entry))
+            continue;
+        if (shift < XA_CHUNK_SHIFT)
+            return false;
+        if (!kgsl_xa_subtree_ok(array, xa_to_node(entry), node,
+                                shift - XA_CHUNK_SHIFT, (u8)i,
+                                depth + 1U, budget))
+            return false;
+    }
+
+    return true;
+}
+
+static bool kgsl_xa_tree_ok(struct xarray *array, struct xa_node *root,
+                            u8 shift)
+{
+    unsigned int budget = KGSL_XA_MAX_NODES;
+
+    return kgsl_xa_subtree_ok(array, root, NULL, shift, 0U, 0U, &budget);
+}
+
 static int kgsl_validate_live_idr(struct idr *idr)
 {
     unsigned int base;
@@ -1109,6 +1196,11 @@ static int kgsl_validate_live_idr(struct idr *idr)
     }
 
     node = xa_to_node(head);
+    if (!kgsl_xa_node_addr_ok(node)) {
+        pr_warn_ratelimited("kgsl: syncsource IDR layout mismatch (root node pointer out of range), peek disabled\n");
+        ret = -EOPNOTSUPP;
+        goto out_rcu;
+    }
     if (copy_from_kernel_nofault(&parent, &node->parent, sizeof(parent)) ||
         copy_from_kernel_nofault(&array, &node->array, sizeof(array)) ||
         copy_from_kernel_nofault(&shift, &node->shift, sizeof(shift)) ||
@@ -1121,8 +1213,11 @@ static int kgsl_validate_live_idr(struct idr *idr)
     }
     if (parent || array != &idr->idr_rt || offset != 0U || count == 0U ||
         count > XA_CHUNK_SIZE || nr_values > count ||
-        shift >= BITS_PER_LONG || (shift % XA_CHUNK_SHIFT) != 0U)
+        shift >= BITS_PER_LONG || (shift % XA_CHUNK_SHIFT) != 0U ||
+        !kgsl_xa_tree_ok(&idr->idr_rt, node, shift)) {
+        pr_warn_ratelimited("kgsl: syncsource IDR layout mismatch, peek disabled\n");
         ret = -EOPNOTSUPP;
+    }
 
 out_rcu:
     rcu_read_unlock();

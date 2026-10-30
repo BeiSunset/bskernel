@@ -103,6 +103,8 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return udp_capture_init(argp);
     case UDP_IOC_READ:
         return udp_capture_read(argp);
+    case UDP_IOC_READ_V2:
+        return udp_capture_read_v2(argp);
     case UDP_IOC_STOP:
         return udp_capture_stop();
     case BS_FILE_IOC_READ:

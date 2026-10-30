@@ -44,6 +44,7 @@ struct process_mem_session {
     struct work_struct cleanup;
     struct mem_process_mem_arm_req patch;
     bool armed;
+    bool cleanup_failed; /* GOT/trampoline restore failed in the close worker */
 };
 
 static DEFINE_MUTEX(session_lock);
@@ -337,23 +338,36 @@ static void cleanup_patch(struct work_struct *work)
 
     if (!session->armed) return;
     mm = live_mm(session);
-    if (IS_ERR(mm)) return;
+    if (IS_ERR(mm)) {
+        session->cleanup_failed = true;
+        pr_err("bs: sensor session cleanup lost target (%ld)\n", PTR_ERR(mm));
+        return;
+    }
     delta_ret = transfer(session, mm, session->patch.delta_addr, &zero, sizeof(zero), true);
     got_ret = transfer(session, mm, session->patch.got_addr,
                        &session->patch.original, sizeof(u64), true);
-    if (delta_ret != sizeof(u64) || got_ret != sizeof(u64))
-        pr_warn("bs: sensor session cleanup failed delta=%zd got=%zd\n", delta_ret, got_ret);
+    if (delta_ret != sizeof(u64) || got_ret != sizeof(u64)) {
+        delta_ret = transfer(session, mm, session->patch.delta_addr, &zero, sizeof(zero), true);
+        got_ret = transfer(session, mm, session->patch.got_addr,
+                           &session->patch.original, sizeof(u64), true);
+    }
+    if (delta_ret != sizeof(u64) || got_ret != sizeof(u64)) {
+        session->cleanup_failed = true;
+        pr_err("bs: sensor session cleanup failed delta=%zd got=%zd\n", delta_ret, got_ret);
+    }
     mmput(mm);
 }
 
 static int process_mem_release(struct inode *inode, struct file *file)
 {
     struct process_mem_session *session = file->private_data;
+    bool cleanup_failed;
 
     /* GUP may reject an exiting task's pending SIGKILL. Run cleanup in a
      * worker without that signal and keep the fd/module alive until it ends. */
     schedule_work(&session->cleanup);
     flush_work(&session->cleanup);
+    cleanup_failed = session->cleanup_failed;
     mutex_lock(&session_lock);
     if (active_session == session) active_session = NULL;
     mutex_unlock(&session_lock);
@@ -362,7 +376,7 @@ static int process_mem_release(struct inode *inode, struct file *file)
     put_task_struct(session->target);
     put_pid(session->owner);
     kfree(session);
-    return 0;
+    return cleanup_failed ? -EIO : 0;
 }
 
 static const struct file_operations process_mem_fops = {

@@ -292,27 +292,16 @@ long udp_capture_init(void __user *arg)
     return 0;
 }
 
-long udp_capture_read(void __user *arg)
+/* Detach up to @want packets from the ring and copy them out. The caller
+ * must bound @want so want * sizeof(packet) fits the validated buffer. */
+static long udp_capture_export(struct udp_cap_packet __user *out, u32 want,
+                               u32 *out_count, u64 *overflow, u64 *captured)
 {
-    struct udp_cap_read_req req;
-    struct udp_cap_packet *out;
     unsigned long flags;
-    u32 want;
-    u32 n;
+    u32 n = 0;
     u32 i;
-    if (!arg)
-        return -EINVAL;
-    if (copy_from_user(&req, arg, sizeof(req)))
-        return -EFAULT;
-    if (!req.buf)
-        return -EINVAL;
-    want = req.max_count;
-    if (!want || want > UDP_CAP_READ_MAX)
-        return -EINVAL;
 
-    out = (struct udp_cap_packet *)(uintptr_t)req.buf;
     mutex_lock(&g_udp_read_lock);
-    n = 0;
     spin_lock_irqsave(&g_udp_lock, flags);
     while (n < want && g_udp_count) {
         struct udp_cap_packet *packet = g_udp_ring[g_udp_tail];
@@ -323,14 +312,11 @@ long udp_capture_read(void __user *arg)
         g_udp_count--;
         n++;
     }
-    req.out_count = n;
-    req.overflow = g_udp_overflow;
-    req.captured = g_udp_captured;
-    req.reserved = 0;
+    *out_count = n;
+    *overflow = g_udp_overflow;
+    *captured = g_udp_captured;
     spin_unlock_irqrestore(&g_udp_lock, flags);
 
-    /* Detached slots remain reader-owned even if the ring wraps or the
-     * capture is reset. Export no stale tail bytes from previous packets. */
     for (i = 0; i < n; i++) {
         size_t used = offsetof(struct udp_cap_packet, payload) +
                       g_udp_read_slots[i]->payload_len;
@@ -344,6 +330,72 @@ long udp_capture_read(void __user *arg)
         return -EFAULT;
     }
     mutex_unlock(&g_udp_read_lock);
+    return 0;
+}
+
+/* Legacy UDP_IOC_READ has no buffer-size input, so export at most one packet:
+ * the ABI contract for max_count >= 1 guarantees one packet worth of space. */
+long udp_capture_read(void __user *arg)
+{
+    struct udp_cap_read_req req;
+    struct udp_cap_packet __user *out;
+    u32 n;
+    long ret;
+
+    if (!arg)
+        return -EINVAL;
+    if (copy_from_user(&req, arg, sizeof(req)))
+        return -EFAULT;
+    if (!req.buf)
+        return -EINVAL;
+    if (!req.max_count || req.max_count > UDP_CAP_READ_MAX)
+        return -EINVAL;
+
+    out = (struct udp_cap_packet __user *)(uintptr_t)req.buf;
+    if (!access_ok(out, sizeof(*out)))
+        return -EFAULT;
+
+    ret = udp_capture_export(out, 1, &n, &req.overflow, &req.captured);
+    if (ret)
+        return ret;
+    req.out_count = n;
+    req.reserved = 0;
+    if (copy_to_user(arg, &req, sizeof(req)))
+        return -EFAULT;
+    return 0;
+}
+
+/* Buffer-size aware export: buf_size is the writable capacity in bytes, so
+ * the exported packet count cannot make copy_to_user() exceed it. */
+long udp_capture_read_v2(void __user *arg)
+{
+    struct udp_cap_read_v2_req req;
+    struct udp_cap_packet __user *out;
+    u32 want;
+    u32 n;
+    long ret;
+
+    if (!arg)
+        return -EINVAL;
+    if (copy_from_user(&req, arg, sizeof(req)))
+        return -EFAULT;
+    if (!req.buf || !req.max_count || req.max_count > UDP_CAP_READ_MAX ||
+        req.reserved)
+        return -EINVAL;
+    if (req.buf_size < sizeof(struct udp_cap_packet))
+        return -EINVAL;
+    want = (u32)(req.buf_size / sizeof(struct udp_cap_packet));
+    if (want > req.max_count)
+        want = req.max_count;
+    out = (struct udp_cap_packet __user *)(uintptr_t)req.buf;
+    if (!access_ok(out, want * sizeof(*out)))
+        return -EFAULT;
+
+    ret = udp_capture_export(out, want, &n, &req.overflow, &req.captured);
+    if (ret)
+        return ret;
+    req.out_count = n;
+    req.reserved = 0;
     if (copy_to_user(arg, &req, sizeof(req)))
         return -EFAULT;
     return 0;
