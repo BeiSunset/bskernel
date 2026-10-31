@@ -7,6 +7,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
+#include <pthread.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
 #include <vector>
 #include <limits.h>
 #include <string>
@@ -22,6 +26,7 @@ static void usage(const char* program) {
         "       %s --mem-bench-batch PID|NAME ADDR SIZE COUNT ITERS\n"
         "       %s --memcpy-bench SIZE ITERS   (userspace memcpy ceiling)\n"
         "       %s --selftest [PID|NAME]   (runtime scenario checks)\n"
+        "       %s --stress [PID|NAME]     (concurrency + exit-race stress)\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
         "--status only checks the existing BS interface; it never loads a module.\n"
@@ -29,7 +34,7 @@ static void usage(const char* program) {
         "Device example:\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader --module /data/local/tmp/bs.ko'\n",
-        program, program, program, program, program, program, program, program);
+        program, program, program, program, program, program, program, program, program);
 }
 
 static int run_touch_v2_test(int slot, int x, int y) {
@@ -469,6 +474,204 @@ static int run_selftest(const char* target)
     return failures == 0 ? 0 : 1;
 }
 
+struct StressCtx {
+    int pid;
+    uint64_t addr;
+    volatile int stop;
+    volatile int errors;
+    volatile long ops;
+};
+
+static int count_open_fds()
+{
+    DIR* dir = opendir("/proc/self/fd");
+    if (!dir)
+        return -1;
+    int count = 0;
+    while (struct dirent* entry = readdir(dir)) {
+        if (entry->d_name[0] != '.')
+            ++count;
+    }
+    closedir(dir);
+    return count;
+}
+
+static void* stress_reader(void* arg)
+{
+    StressCtx* ctx = static_cast<StressCtx*>(arg);
+    std::vector<bs::MemBatchSegment> segs(8);
+    std::vector<std::vector<unsigned char>> bufs(8, std::vector<unsigned char>(64));
+    std::vector<unsigned char> single(64);
+    while (!ctx->stop) {
+        for (int i = 0; i < 8; ++i) {
+            segs[size_t(i)].addr = ctx->addr;
+            segs[size_t(i)].out = bufs[size_t(i)].data();
+            segs[size_t(i)].len = 64;
+        }
+        if (bs::read_memory_batch(ctx->pid, segs.data(), 8) != 0) {
+            ++ctx->errors;
+        } else {
+            for (int i = 0; i < 8; ++i)
+                if (segs[size_t(i)].err != 0)
+                    ++ctx->errors;
+        }
+        if (!bs::read_memory(ctx->pid, ctx->addr, single.data(), single.size()))
+            ++ctx->errors;
+        ++ctx->ops;
+    }
+    return nullptr;
+}
+
+static void* stress_mapper(void* arg)
+{
+    StressCtx* ctx = static_cast<StressCtx*>(arg);
+    const size_t len = 1u << 20;
+    while (!ctx->stop) {
+        void* area = mmap(nullptr, len, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (area == MAP_FAILED) {
+            ++ctx->errors;
+            break;
+        }
+        static_cast<volatile char*>(area)[0] = 1;
+        munmap(area, len);
+    }
+    return nullptr;
+}
+
+/* Reads a child memory while the child exits underneath us: every failure must
+ * be a clean error, never a crash, and the child must reap. */
+static bool stress_exit_race(int* ok_reads, int* err_reads)
+{
+    int pipe_fds[2];
+    if (pipe(pipe_fds) != 0)
+        return false;
+    const pid_t child = fork();
+    if (child < 0) {
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+        return false;
+    }
+    if (child == 0) {
+        close(pipe_fds[0]);
+        void* area = mmap(nullptr, 4u << 20, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (area == MAP_FAILED)
+            _exit(2);
+        std::memset(area, 0x33, 4096);
+        const unsigned long long addr = reinterpret_cast<unsigned long long>(area);
+        if (write(pipe_fds[1], &addr, sizeof(addr)) != ssize_t(sizeof(addr)))
+            _exit(3);
+        close(pipe_fds[1]);
+        usleep(50000);
+        _exit(0);
+    }
+    close(pipe_fds[1]);
+    unsigned long long addr = 0;
+    if (read(pipe_fds[0], &addr, sizeof(addr)) != ssize_t(sizeof(addr))) {
+        close(pipe_fds[0]);
+        waitpid(child, nullptr, 0);
+        return false;
+    }
+    close(pipe_fds[0]);
+    std::vector<unsigned char> buffer(4096);
+    int ok = 0;
+    int err = 0;
+    int status = 0;
+    for (int i = 0; i < 200000; ++i) {
+        if (bs::read_memory(int(child), uint64_t(addr), buffer.data(), buffer.size()))
+            ++ok;
+        else
+            ++err;
+        if (waitpid(child, &status, WNOHANG) == child)
+            break;
+    }
+    waitpid(child, &status, 0);
+    if (bs::read_memory(int(child), uint64_t(addr), buffer.data(), buffer.size()))
+        ++ok;
+    else
+        ++err;
+    *ok_reads = ok;
+    *err_reads = err;
+    return true;
+}
+
+static int run_stress(const char* target)
+{
+    int failures = 0;
+    auto check = [&](bool ok, const char* what) {
+        std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
+        if (!ok) ++failures;
+    };
+
+    /* 1. init/close cycles must not leak file descriptors. */
+    const int fds_before = count_open_fds();
+    bool cycles_ok = true;
+    for (int i = 0; i < 20; ++i) {
+        if (!bs::init()) {
+            cycles_ok = false;
+            break;
+        }
+        bs::close();
+    }
+    const int fds_after = count_open_fds();
+    check(cycles_ok, "20 init/close cycles");
+    check(fds_before < 0 || fds_after <= fds_before + 1, "no fd leak across cycles");
+
+    if (!bs::init()) {
+        std::fputs("BS interface is unavailable; load the module first.\n", stderr);
+        return 1;
+    }
+
+    const int self = int(getpid());
+    const int pid = (target && *target) ? resolve_bench_pid(target) : self;
+    check(pid > 0, "resolve target pid");
+
+    std::vector<char> block(4096);
+    uint64_t addr = 0;
+    size_t size = 0;
+    check(pick_bench_range(pid > 0 ? pid : self, 4096, block, addr, size),
+          "find readable block");
+    if (pid <= 0 || addr == 0) {
+        bs::close();
+        return 1;
+    }
+
+    /* 2. concurrent readers plus a thread that maps/unmaps 1 MiB in a loop:
+     * exercises mmap_read_lock vs munmap and per-call refcounts. */
+    StressCtx ctx{};
+    ctx.pid = pid;
+    ctx.addr = addr;
+    pthread_t readers[3];
+    pthread_t mapper;
+    pthread_create(&mapper, nullptr, stress_mapper, &ctx);
+    for (pthread_t& thread : readers)
+        pthread_create(&thread, nullptr, stress_reader, &ctx);
+    for (int i = 0; i < 20; ++i)
+        usleep(50000);
+    ctx.stop = 1;
+    for (pthread_t& thread : readers)
+        pthread_join(thread, nullptr);
+    pthread_join(mapper, nullptr);
+    std::printf("  concurrency: %ld ops, %d errors\n", ctx.ops, ctx.errors);
+    check(ctx.ops > 0, "concurrent readers made progress");
+    check(ctx.errors == 0, "no read errors under concurrency/mapping churn");
+
+    /* 3. target process exiting while we read it must not crash the driver. */
+    int ok_reads = 0;
+    int err_reads = 0;
+    check(stress_exit_race(&ok_reads, &err_reads), "exit-race child spawned");
+    std::printf("  exit race: %d ok, %d clean failures\n", ok_reads, err_reads);
+    check(err_reads > 0, "reads after target exit fail cleanly");
+
+    /* 4. touch ioctl path still initialises with logging compiled out. */
+    check(bs::touch_v2_init(), "touch_v2_init");
+
+    bs::close();
+    std::printf("stress: %d failure(s)\n", failures);
+    return failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     const char* module = nullptr;
     const char* directory = nullptr;
@@ -481,6 +684,8 @@ int main(int argc, char** argv) {
     bool memcpy_bench = false;
     bool selftest = false;
     const char* selftest_target = nullptr;
+    bool stress = false;
+    const char* stress_target = nullptr;
     int touch_slot = 0;
     int touch_x = 320;
     int touch_y = 480;
@@ -520,6 +725,10 @@ int main(int argc, char** argv) {
             bench_size = size_t(std::strtoull(argv[++i], nullptr, 0));
             bench_count = int(std::strtol(argv[++i], nullptr, 0));
             bench_iters = int(std::strtol(argv[++i], nullptr, 0));
+        } else if (option == "--stress") {
+            stress = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+                stress_target = argv[++i];
         } else if (option == "--selftest") {
             selftest = true;
             if (i + 1 < argc && argv[i + 1][0] != '-')
@@ -565,10 +774,14 @@ int main(int argc, char** argv) {
                           touch_v2_test || mem_bench || mem_batch_bench)) ||
         (selftest && (module || directory || params_given || status_only ||
                       touch_v2_test || mem_bench || mem_batch_bench ||
-                      memcpy_bench))) {
+                      memcpy_bench || stress)) ||
+        (stress && (module || directory || params_given || status_only ||
+                    touch_v2_test || mem_bench || mem_batch_bench ||
+                    memcpy_bench || selftest))) {
         std::fputs("Choose one of --module, --dir, --status, --touch-v2-test, --mem-bench or --mem-bench-batch.\n", stderr);
         return 2;
     }
+    if (stress) return run_stress(stress_target);
     if (selftest) return run_selftest(selftest_target);
     if (memcpy_bench) return run_memcpy_bench(bench_size, bench_iters);
     if (mem_batch_bench)
