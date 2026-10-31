@@ -441,6 +441,8 @@ static unsigned int load_system_ca(mbedtls_x509_crt* chain) {
     return loaded;
 }
 
+static bool dechunk(const std::string& in, std::string* out);
+
 /* Returns the page body, or false when the request could not be completed. */
 static bool https_get(const char* host, const char* path, std::string* body) {
     mbedtls_net_context server;
@@ -872,6 +874,7 @@ static void show_menu(int detected) {
 
 static int run_menu(const std::string& /*release*/, int detected,
                     const std::string& params, bool verify) {
+    (void)verify;
     char line[64];
     for (;;) {
         std::printf("\n%s请根据当前内核版本，从列表中选择最接近的驱动方案安装：%s\n\n",
@@ -904,6 +907,7 @@ static int run_menu(const std::string& /*release*/, int detected,
 
 static int run_auto(const std::string& release, int detected,
                     const std::string& params, bool verify) {
+    (void)verify;
     if (detected < 0) {
         std::printf("%s[x] 自动模式：当前内核 %s 不在支持列表"
                     "（5.10/5.15/6.1/6.6/6.12/6.18）%s\n",
@@ -1067,7 +1071,6 @@ int main(int argc, char** argv) {
             return kExitFailure;
         }
         ok("驱动完整性验证通过!");
-        pre_verified = true;
     }
 
     info("正在向服务器验证驱动版本请稍后...");
