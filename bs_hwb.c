@@ -83,6 +83,7 @@ struct bs_hwb_session {
     int configured;
     int hooks_installed;
     int target_tid;
+    struct task_struct *target;   /* pinned at SET time: TIDs are recycled */
     uint64_t generation;
     struct file *owner;
     uint32_t point_count;
@@ -1322,13 +1323,19 @@ struct bs_hwb_cpu_clear_arg {
     int disable_debug;
 };
 
+static void bs_hwb_clear_matching_current_cpu_locked(void);
+
 static void bs_hwb_clear_cpu_cb(void *data)
 {
-    struct bs_hwb_cpu_clear_arg *arg = data;
+    unsigned long flags;
 
-    bs_hwb_clear_cpu_slots(arg->used_brps, arg->used_wrps);
-    if (arg->disable_debug)
-        bs_hwb_disable_cpu();
+    (void)data;
+    /* Only clear slots that still hold exactly our programmed address/control.
+     * Blindly zeroing every slot would wipe this CPU's kernel perf/ptrace
+     * watchpoints, whose bookkeeping lives in bp_on_reg[]/wp_on_reg[]. */
+    spin_lock_irqsave(&g_hwb_lock, flags);
+    bs_hwb_clear_matching_current_cpu_locked();
+    spin_unlock_irqrestore(&g_hwb_lock, flags);
 }
 
 static void bs_hwb_install_current_cpu_locked(void)
@@ -1369,13 +1376,13 @@ static void bs_hwb_install_current_cpu_locked(void)
 static void bs_hwb_refresh_cpu_cb(void *data)
 {
     unsigned long flags;
-    int target_tid = *(int *)data;
+    (void)data;
 
     spin_lock_irqsave(&g_hwb_lock, flags);
-    if (g_hwb.configured && current->pid == target_tid)
+    if (g_hwb.configured && current == READ_ONCE(g_hwb.target))
         bs_hwb_install_current_cpu_locked();
     else
-        bs_hwb_clear_cpu_slots(g_hwb.used_brps, g_hwb.used_wrps);
+        bs_hwb_clear_matching_current_cpu_locked();
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 }
 
@@ -1402,10 +1409,14 @@ static void bs_hwb_record_hit(uint32_t point_index, uint64_t hit_addr,
     rec.sp = regs->sp;
     rec.pstate = regs->pstate;
     memcpy(rec.x, regs->regs, sizeof(rec.x));
-    rec.fpsr = bs_hwb_read_fpsr();
-    rec.fpcr = bs_hwb_read_fpcr();
-    for (i = 0; i < 32; i++)
-        bs_hwb_read_q_reg(i, rec.q[i]);
+    /* If the hardware holds another task's FP state (TIF_FOREIGN_FPSTATE),
+     * reading q0-q31 would capture that task's registers: leave them zero. */
+    if (!test_thread_flag(TIF_FOREIGN_FPSTATE)) {
+        rec.fpsr = bs_hwb_read_fpsr();
+        rec.fpcr = bs_hwb_read_fpcr();
+        for (i = 0; i < 32; i++)
+            bs_hwb_read_q_reg(i, rec.q[i]);
+    }
 
     spin_lock_irqsave(&g_hwb_lock, flags);
 
@@ -1443,7 +1454,6 @@ static int bs_hwb_breakpoint_work(struct pt_regs *hook_regs)
 {
     struct pt_regs *regs;
     unsigned long flags;
-    int target_tid;
     int slot;
     uint32_t i;
 
@@ -1454,12 +1464,12 @@ static int bs_hwb_breakpoint_work(struct pt_regs *hook_regs)
     if (!regs || !user_mode(regs))
         return 0;
 
-    target_tid = READ_ONCE(g_hwb.target_tid);
-    if (!READ_ONCE(g_hwb.configured) || current->pid != target_tid)
+    if (!READ_ONCE(g_hwb.configured) ||
+        current != READ_ONCE(g_hwb.target))
         return 0;
 
     spin_lock_irqsave(&g_hwb_lock, flags);
-    if (!g_hwb.configured || current->pid != g_hwb.target_tid) {
+    if (!g_hwb.configured || current != g_hwb.target) {
         spin_unlock_irqrestore(&g_hwb_lock, flags);
         return 0;
     }
@@ -1505,7 +1515,6 @@ static int bs_hwb_watchpoint_work(struct pt_regs *hook_regs)
     uint64_t best_dist = ~0ULL;
     int best_slot = -1;
     int best_point = -1;
-    int target_tid;
     int slot;
     uint32_t i;
 
@@ -1518,12 +1527,12 @@ static int bs_hwb_watchpoint_work(struct pt_regs *hook_regs)
     if (!regs || !user_mode(regs))
         return 0;
 
-    target_tid = READ_ONCE(g_hwb.target_tid);
-    if (!READ_ONCE(g_hwb.configured) || current->pid != target_tid)
+    if (!READ_ONCE(g_hwb.configured) ||
+        current != READ_ONCE(g_hwb.target))
         return 0;
 
     spin_lock_irqsave(&g_hwb_lock, flags);
-    if (!g_hwb.configured || current->pid != g_hwb.target_tid) {
+    if (!g_hwb.configured || current != g_hwb.target) {
         spin_unlock_irqrestore(&g_hwb_lock, flags);
         return 0;
     }
@@ -1647,7 +1656,7 @@ bs_hwb_finish_task_switch_return_work(
 
     spin_lock_irqsave(&g_hwb_lock, flags);
     if (g_hwb.configured && generation == g_hwb.generation) {
-        if (current->pid == g_hwb.target_tid)
+        if (current == g_hwb.target)
             bs_hwb_install_current_cpu_locked();
         else
             bs_hwb_clear_matching_current_cpu_locked();
@@ -1743,6 +1752,7 @@ static void bs_hwb_hooks_remove_locked(void)
 static void bs_hwb_stop_locked(void)
 {
     struct bs_hwb_cpu_clear_arg arg;
+    struct task_struct *target;
     unsigned long flags;
     int cpu;
 
@@ -1752,9 +1762,16 @@ static void bs_hwb_stop_locked(void)
         g_hwb.generation = 1;
     arg.used_brps = g_hwb.used_brps;
     arg.used_wrps = g_hwb.used_wrps;
-    arg.disable_debug = 1;
+    /* Never touch MDSCR/OSLAR here: the kernel keeps its own per-CPU debug
+     * monitor refcount and would not re-enable ptrace/perf breakpoints after
+     * we clear MDE/KDE behind its back. */
+    arg.disable_debug = 0;
     g_hwb.configured = 0;
+    target = g_hwb.target;
+    g_hwb.target = NULL;
     spin_unlock_irqrestore(&g_hwb_lock, flags);
+    if (target)
+        put_task_struct(target);
 
     if (arg.used_brps || arg.used_wrps) {
         for_each_online_cpu(cpu)
@@ -1848,6 +1865,7 @@ long bs_hwb_set(struct file *owner, void __user *arg)
     int brps;
     int wrps;
     int ret;
+    struct task_struct *task = NULL;
     unsigned long flags;
 
     if (copy_from_user(&req, arg, sizeof(req)))
@@ -1860,7 +1878,15 @@ long bs_hwb_set(struct file *owner, void __user *arg)
     if (req.target_tid <= 0 || req.point_count == 0 ||
         req.point_count > BS_HWB_MAX_POINTS)
         return -EINVAL;
-    if (!bs_hwb_tid_alive(req.target_tid))
+    {
+        struct pid *pid = find_get_pid(req.target_tid);
+
+        if (pid) {
+            task = get_pid_task(pid, PIDTYPE_PID);
+            put_pid(pid);
+        }
+    }
+    if (!task)
         return -ESRCH;
 
     brps = bs_hwb_get_brps();
@@ -1899,6 +1925,8 @@ long bs_hwb_set(struct file *owner, void __user *arg)
 
     spin_lock_irqsave(&g_hwb_lock, flags);
     g_hwb.target_tid = req.target_tid;
+    g_hwb.target = task;
+    task = NULL;                 /* owned by the session now */
     g_hwb.owner = owner;
     g_hwb.point_count = req.point_count;
     g_hwb.used_brps = brps_needed;
@@ -1917,6 +1945,8 @@ out_unlock:
     if (ret)
         bs_hwb_stop_locked();
     mutex_unlock(&g_hwb_mutex);
+    if (task)
+        put_task_struct(task);
     return ret;
 }
 
