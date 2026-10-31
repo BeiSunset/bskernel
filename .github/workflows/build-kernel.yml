@@ -124,9 +124,60 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  native-loader:
+    name: Build native loader
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download kernel modules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bs-kernel-*
+          merge-multiple: true
+          path: modules
+
+      - name: Generate embedded module table
+        run: |
+          set -euo pipefail
+          python3 sdk/tools/gen_embedded_modules.py sdk/tools/bs_native_modules.h modules
+          ls -l sdk/tools/bs_native_modules.h
+
+      - name: Build BSLoADERDriver with the NDK
+        run: |
+          set -euo pipefail
+          cmake -S sdk -B build/native -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 \
+            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
+            -DBSKERNEL_BUILD_NATIVE_LOADER=ON \
+            -DBSKERNEL_EMBEDDED_HEADER="$PWD/sdk/tools" \
+            -DBSKERNEL_BUILD_TOOLS=OFF -DBSKERNEL_BUILD_EXAMPLE=OFF
+          cmake --build build/native --target BSLoADERDriver --parallel "$(nproc)"
+          mkdir -p out
+          install -m 0755 build/native/BSLoADERDriver out/BSLoaderDriver
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/BSLoaderDriver
+          file out/BSLoaderDriver || true
+          sha256sum out/BSLoaderDriver > out/BSLoaderDriver.sha256
+
+      - name: Upload native loader
+        uses: actions/upload-artifact@v4
+        with:
+          name: bskernel-native-loader
+          path: |
+            out/BSLoaderDriver
+            out/BSLoaderDriver.sha256
+          if-no-files-found: error
+          retention-days: 30
+
   package:
     name: Package and publish release
-    needs: [build, sdk]
+    needs: [build, sdk, native-loader]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -142,6 +193,12 @@ jobs:
         with:
           name: bskernel-sdk-arm64-v8a
           path: out/bskernel-arm64-v8a
+
+      - name: Download native loader
+        uses: actions/download-artifact@v4
+        with:
+          name: bskernel-native-loader
+          path: out
 
       - name: Download kernel modules
         uses: actions/download-artifact@v4
@@ -203,6 +260,8 @@ jobs:
           path: |
             out/bskernel-arm64-v8a.tar.gz
             out/bskernel-arm64-v8a.tar.gz.sha256
+            out/BSLoaderDriver
+            out/BSLoaderDriver.sha256
             BSLoaderDriver.sh
             BSLoaderDriver.sh.sha256
           if-no-files-found: error
@@ -248,6 +307,8 @@ jobs:
             out/*.ko.zip.sha256
             BSLoaderDriver.sh
             BSLoaderDriver.sh.sha256
+            out/BSLoaderDriver
+            out/BSLoaderDriver.sha256
           )
           gh release upload "$RELEASE_TAG" "${files[@]}"
 
