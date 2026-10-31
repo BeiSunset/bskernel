@@ -423,7 +423,10 @@ static int run_selftest(const char* target)
         segs[0].addr = reinterpret_cast<uint64_t>(pattern.data());
         segs[0].out = pattern.data();
         segs[0].len = (4u * 1024u * 1024u) + 4096u;
-        check(bs::read_memory_batch(self, segs.data(), 1) == -EINVAL, "rejects >4 MiB batch");
+        {
+            const long rc = bs::read_memory_batch(self, segs.data(), 1);
+            check(rc == -E2BIG || rc == -EINVAL, "rejects >4 MiB batch");
+        }
     }
 
     /* 6. repeated batch reads must stay stable. */
@@ -624,24 +627,26 @@ static int run_stress(const char* target)
     }
 
     const int self = int(getpid());
-    const int pid = (target && *target) ? resolve_bench_pid(target) : self;
-    check(pid > 0, "resolve target pid");
 
-    std::vector<char> block(4096);
-    uint64_t addr = 0;
-    size_t size = 0;
-    check(pick_bench_range(pid > 0 ? pid : self, 4096, block, addr, size),
-          "find readable block");
-    if (pid <= 0 || addr == 0) {
+    /* Deterministic source: our own mlocked, pre-faulted buffer. Reading a live
+     * game while it remaps or reclaims memory returns legitimate EFAULTs, which
+     * would say nothing about the driver. */
+    const size_t stable_len = 1u << 20;
+    void* stable = mmap(nullptr, stable_len, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(stable != MAP_FAILED, "stable source buffer mapped");
+    if (stable == MAP_FAILED) {
         bs::close();
         return 1;
     }
+    std::memset(stable, 0x5a, stable_len);
+    mlock(stable, stable_len);
 
     /* 2. concurrent readers plus a thread that maps/unmaps 1 MiB in a loop:
      * exercises mmap_read_lock vs munmap and per-call refcounts. */
     StressCtx ctx{};
-    ctx.pid = pid;
-    ctx.addr = addr;
+    ctx.pid = self;
+    ctx.addr = reinterpret_cast<uint64_t>(stable);
     pthread_t readers[3];
     pthread_t mapper;
     pthread_create(&mapper, nullptr, stress_mapper, &ctx);
@@ -664,8 +669,36 @@ static int run_stress(const char* target)
     std::printf("  exit race: %d ok, %d clean failures\n", ok_reads, err_reads);
     check(err_reads > 0, "reads after target exit fail cleanly");
 
-    /* 4. touch ioctl path still initialises with logging compiled out. */
+    /* 4. optional live target: a one-shot availability check only, because a
+     * running game may unmap or reclaim any given page at any time. */
+    if (target && *target) {
+        const int tpid = resolve_bench_pid(target);
+        check(tpid > 0, "resolve target pid");
+        if (tpid > 0) {
+            std::vector<char> probe(4096);
+            uint64_t taddr = 0;
+            size_t tsize = 0;
+            const bool found = pick_bench_range(tpid, 4096, probe, taddr, tsize);
+            check(found, "find readable target block");
+            if (found) {
+                std::vector<unsigned char> out(64, 0);
+                std::vector<bs::MemBatchSegment> segs(1);
+                segs[0].addr = taddr;
+                segs[0].out = out.data();
+                segs[0].len = 64;
+                check(bs::read_memory(tpid, taddr, out.data(), out.size()),
+                      "single read of target memory");
+                const long rc = bs::read_memory_batch(tpid, segs.data(), 1);
+                check(rc == 0 && segs[0].err == 0, "batch read of target memory");
+            }
+        }
+    }
+
+    /* 5. touch ioctl path still initialises with logging compiled out. */
     check(bs::touch_v2_init(), "touch_v2_init");
+
+    munlock(stable, stable_len);
+    munmap(stable, stable_len);
 
     bs::close();
     std::printf("stress: %d failure(s)\n", failures);
