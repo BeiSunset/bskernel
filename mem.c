@@ -1857,9 +1857,7 @@ long mem_read_cache(void __user *arg)
 long mem_read_batch(void __user *arg)
 {
     struct mem_batch_req req;
-    /* 64 * 32 B = 2 KiB: fits the arm64 kernel stack and removes a
-     * kmalloc/kfree pair from every batch ioctl. */
-    struct mem_batch_seg segs[MEM_BATCH_MAX_SEGS];
+    struct mem_batch_seg *segs;
     struct task_struct *task;
     struct mm_struct *mm;
     uint64_t total_bytes = 0;
@@ -1875,6 +1873,11 @@ long mem_read_batch(void __user *arg)
         return -EINVAL;
 
     segs_size = (size_t)req.count * sizeof(*segs);
+    /* Kept on the heap: a 64-entry on-stack array pushed this function past
+     * the kernel's 2048-byte frame limit (-Wframe-larger-than). */
+    segs = kmalloc(segs_size, GFP_KERNEL);
+    if (!segs)
+        return -ENOMEM;
     if (copy_from_user(segs, (char __user *)req.segs, segs_size)) {
         ret = -EFAULT;
         goto out_free;
@@ -1955,6 +1958,7 @@ long mem_read_batch(void __user *arg)
     ret = 0;
 
 out_free:
+    kfree(segs);
     return ret;
 }
 
