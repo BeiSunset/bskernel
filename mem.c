@@ -959,14 +959,17 @@ static struct rw_semaphore __linearmap_rwlock;
 static bool g_linearmap_inited;
 static struct memblock *memblock_ptr = NULL;
 
-static int __map_regions(void)
+static int __map_regions(unsigned long max_regions)
 {
     struct memblock_type *memtype = &memblock_ptr->memory;
     unsigned long curidx = 0;
     pgprot_t prot = __pgprot(PROT_DEFAULT | PTE_PXN | PTE_UXN | PTE_WRITE |
                              PTE_ATTRINDX(MT_NORMAL_NC));
 
-    for (unsigned long i = 0; i < memtype->cnt; i++) {
+    /* max_regions is the capacity computed before the array was allocated.
+     * memblock can grow concurrently (memory hotplug); without this bound the
+     * loop would write past __linearmap_info_arr. */
+    for (unsigned long i = 0; i < memtype->cnt && curidx < max_regions; i++) {
         struct memblock_region *region = &memtype->regions[i];
 
         if (region->flags & MEMBLOCK_NOMAP)
@@ -1049,7 +1052,7 @@ static int create_linearmap(void)
     }
 
     if (!__linearmap_info_ok) {
-        retval = __map_regions();
+        retval = __map_regions(__linearmap_info_cnt);
         if (retval) {
             __destroy_linearmap_locked();
         } else {
@@ -1978,7 +1981,13 @@ int mem_core_init(void)
     init_rwsem(&__linearmap_rwlock);
     g_linearmap_inited = true;
 
-    return create_linearmap();
+    {
+        int ret = create_linearmap();
+
+        if (ret)
+            g_linearmap_inited = false;
+        return ret;
+    }
 }
 
 void mem_core_exit(void)

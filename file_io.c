@@ -163,6 +163,13 @@ long bs_file_read(void __user *arg)
         return -ENOMEM;
 
     mutex_lock(&g_file_io_lock);
+    /* Authoritative check under the same lock bs_file_io_exit() uses, so
+     * override_creds() can never be handed a NULL/freed cred. */
+    if (!g_file_cred) {
+        mutex_unlock(&g_file_io_lock);
+        kfree(buffer);
+        return -ENODEV;
+    }
     old_cred = override_creds(g_file_cred);
     if (model_path) {
         ret = validate_model_directory();
@@ -259,6 +266,11 @@ long bs_file_write(void __user *arg)
     }
 
     mutex_lock(&g_file_io_lock);
+    if (!g_file_cred) {
+        mutex_unlock(&g_file_io_lock);
+        kfree(buffer);
+        return -ENODEV;
+    }
     old_cred = override_creds(g_file_cred);
     file = open_config_file(req.path, open_flags);
     if (IS_ERR(file)) {
@@ -333,6 +345,8 @@ int bs_file_io_init(void)
     }
     if (ret) {
         pr_err("failed to set file I/O context %s: %d\n", secctx, ret);
+        put_cred(cred);
+        return ret;
     }
 
     g_file_cred = cred;
@@ -342,8 +356,10 @@ int bs_file_io_init(void)
 
 void bs_file_io_exit(void)
 {
+    mutex_lock(&g_file_io_lock);
     if (g_file_cred) {
         put_cred(g_file_cred);
         g_file_cred = NULL;
     }
+    mutex_unlock(&g_file_io_lock);
 }
