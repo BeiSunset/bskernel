@@ -151,7 +151,7 @@ jobs:
       - name: Fetch mbedTLS for the HTTPS version check
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch v3.6.2 https://github.com/Mbed-TLS/mbedtls.git third_party/mbedtls
+          git clone --depth 1 --branch v3.6.2 --recurse-submodules --shallow-submodules https://github.com/Mbed-TLS/mbedtls.git third_party/mbedtls
           git -C third_party/mbedtls rev-parse HEAD
 
       - name: Build BSLoADERDriver with the NDK
