@@ -23,6 +23,7 @@ def xor_key(name):
 
 
 entries = []
+module_version = None
 for kmi, series in KMIS:
     path = os.path.join(SRC, "bs-%s.ko" % kmi)
     if not os.path.exists(path):
@@ -32,6 +33,20 @@ for kmi, series in KMIS:
     if not raw.startswith(b"\x7fELF"):
         sys.exit("%s is not an ELF file" % path)
     digest = hashlib.sha256(raw).hexdigest()
+    version = None
+    marker = raw.find(b"version=")
+    if marker >= 0:
+        end = raw.find(b"\x00", marker)
+        if end < 0:
+            end = min(len(raw), marker + 32)
+        candidate = raw[marker + len(b"version="):end].decode("ascii", "ignore")
+        if candidate and all(ch.isdigit() or ch == "." for ch in candidate):
+            version = candidate
+    if not version:
+        sys.exit("%s has no usable modinfo version" % path)
+    if "module_version" in globals() and module_version != version:
+        sys.exit("module versions differ between artifacts")
+    module_version = version
     sidecar = path + ".sha256"
     if os.path.exists(sidecar):
         with open(sidecar, "r", encoding="utf-8") as handle:
@@ -66,7 +81,8 @@ with open(OUT, "w", encoding="utf-8") as out:
             % (kmi, series, index, len(enc), key, len(raw), digest)
         )
     out.write("};\n\n")
-    out.write("static const unsigned int embedded_module_count = %du;\n\n" % len(entries))
+    out.write("static const unsigned int embedded_module_count = %du;\n" % len(entries))
+    out.write("#define BS_EMBEDDED_MODULE_VERSION \"%s\"\n\n" % module_version)
     out.write("#endif /* BSKERNEL_NATIVE_MODULES_H */\n")
 
 print("wrote %s" % OUT)

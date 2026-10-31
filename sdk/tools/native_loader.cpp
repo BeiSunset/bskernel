@@ -631,7 +631,9 @@ static bool https_get(const char* host, const char* path, std::string* body) {
         if (header_end == std::string::npos)
             goto out;
         if (response.find("Transfer-Encoding: chunked") !=
-            std::string::npos) {
+                std::string::npos ||
+            response.find("transfer-encoding: chunked") !=
+                std::string::npos) {
             std::string decoded;
             if (!dechunk(response.substr(header_end + 4), &decoded))
                 goto out;
@@ -810,7 +812,7 @@ static bool loaded_module_is_ours() {
     std::string value(line);
     while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
         value.pop_back();
-    return value == kVersionFull;
+    return value == BS_EMBEDDED_MODULE_VERSION;
 }
 
 static int detect_kmi_index(std::string* release) {

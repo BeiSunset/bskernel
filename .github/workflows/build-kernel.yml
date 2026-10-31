@@ -67,6 +67,8 @@ jobs:
             grep -q "vermagic=" /tmp/modinfo.txt
             echo "--- undefined symbols (first 40) ---"
             llvm-nm -u bs.ko | sed -n "1,40p"
+            llvm-strings bs.ko | grep -q "bs_stage"
+            llvm-strings bs.ko | grep -q "bs_log_verbose"
             mkdir -p out
             output="bs-${KMI}.ko"
             cp bs.ko "out/$output"

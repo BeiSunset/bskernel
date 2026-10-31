@@ -1311,9 +1311,12 @@ static ssize_t nc_memrw_cache(struct mm_struct *mm, unsigned long addr, char __u
         if (!virt)
             break;
 
-        if (!cached) {
+        if (!cached && pfn_valid(PFN_DOWN(phys))) {
             /* The NC alias is not coherent with the target cached view, so
-             * clean the target lines to PoC before reading through it. */
+             * clean the target lines to PoC before reading through it. Device
+             * and reserved PFNs are not in the linear map; dc cvac on the
+             * corresponding phys_to_virt() address would fault. The read below
+             * then fails safe through ____phys_to_virt_nc(). */
             unsigned long line = dcache_min_line();
             unsigned long c_va = (unsigned long)phys_to_virt(phys);
             unsigned long s = c_va & ~(line - 1);
