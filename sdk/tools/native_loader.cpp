@@ -863,8 +863,17 @@ static bool write_all(int fd, const unsigned char* data, size_t size) {
     return true;
 }
 
+/* Stage tells which step failed; only stage 3 is a kernel-side rejection. */
+enum {
+    kLoadMemfd = 0,
+    kLoadWrite = 1,
+    kLoadSeek = 2,
+    kLoadFinit = 3,
+};
+
 static int load_module_bytes(const unsigned char* data, size_t size,
-                             const std::string& params) {
+                             const std::string& params, int* out_stage) {
+    *out_stage = kLoadMemfd;
     const long raw_fd = syscall(__NR_memfd_create, "",
                                 static_cast<long>(MFD_CLOEXEC));
     if (raw_fd < 0)
@@ -873,13 +882,16 @@ static int load_module_bytes(const unsigned char* data, size_t size,
 
     int error = 0;
     errno = 0;
+    *out_stage = kLoadWrite;
     if (!write_all(fd, data, size)) {
         error = errno != 0 ? errno : EIO;
-    } else if (::lseek(fd, 0, SEEK_SET) < 0) {
+    } else if (*out_stage = kLoadSeek, ::lseek(fd, 0, SEEK_SET) < 0) {
         error = errno;
-    } else if (syscall(__NR_finit_module, static_cast<long>(fd),
-                       params.c_str(), 0L) != 0) {
-        error = errno;
+    } else {
+        *out_stage = kLoadFinit;
+        if (syscall(__NR_finit_module, static_cast<long>(fd),
+                    params.c_str(), 0L) != 0)
+            error = errno;
     }
 
     (void)::close(fd);
@@ -914,11 +926,29 @@ static int load_kmi(const char* kmi, const std::string& params,
         return kExitFailure;
     }
 
-    const int error = load_module_bytes(ko.data(), ko.size(), params);
+    int stage = kLoadMemfd;
+    const int error = load_module_bytes(ko.data(), ko.size(), params, &stage);
     if (error != 0) {
-        std::printf("%s[x] 内核模块加载失败!%s %s (%d)\n", kRed, kReset,
-                    errno_name(error), error);
-        if (error == EEXIST) {
+        switch (stage) {
+        case kLoadMemfd:
+            std::printf("%s[x] 创建 memfd 失败!%s %s (%d)\n", kRed, kReset,
+                        errno_name(error), error);
+            break;
+        case kLoadWrite:
+            std::printf("%s[x] 写入模块数据失败!%s %s (%d)\n", kRed, kReset,
+                        errno_name(error), error);
+            break;
+        case kLoadSeek:
+            std::printf("%s[x] 重置模块数据偏移失败!%s %s (%d)\n", kRed, kReset,
+                        errno_name(error), error);
+            break;
+        default:
+            std::printf("%s[x] 内核模块加载失败!%s %s (%d)\n", kRed, kReset,
+                        errno_name(error), error);
+            err("提示: 失败发生在内核装载阶段，可执行 dmesg 查看内核原因");
+            break;
+        }
+        if (stage == kLoadFinit && error == EEXIST) {
             if (loaded_module_is_ours()) {
                 ok("内核模块加载成功!");
                 return kExitOk;

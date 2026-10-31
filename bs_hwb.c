@@ -1374,8 +1374,11 @@ static int bs_hwb_sav_alloc_locked(void)
 {
     if (g_hwb_sav)
         return 0;
-    g_hwb_sav = kvzalloc(sizeof(*g_hwb_sav) * num_possible_cpus(),
-                         GFP_KERNEL);
+    /* bs_hwb_sav_current() indexes with smp_processor_id(), whose maximum is
+     * nr_cpu_ids - 1. num_possible_cpus() only matches that while
+     * cpu_possible_mask is contiguous from 0 (a disabled middle CPU makes it
+     * sparse), so size by nr_cpu_ids to avoid an out-of-bounds write. */
+    g_hwb_sav = kvzalloc(sizeof(*g_hwb_sav) * nr_cpu_ids, GFP_KERNEL);
     return g_hwb_sav ? 0 : -ENOMEM;
 }
 
@@ -1597,8 +1600,11 @@ static int bs_hwb_breakpoint_work(struct pt_regs *hook_regs)
                 ((slot_ctrl & ~0x1ULL) != ctrl))
                 continue;
 
-            bs_hwb_write_dbg_reg(BS_HWB_DBG_BCR, slot, 0);
-            bs_hwb_write_dbg_reg(BS_HWB_DBG_BVR, slot, 0);
+            /* Restore whatever ptrace/perf breakpoint this slot displaced
+             * instead of zeroing it: a zeroed slot no longer matches the
+             * stop-time restore, so the displaced breakpoint would be lost. */
+            bs_hwb_restore_slot_current_cpu(1, (uint32_t)slot,
+                                            READ_ONCE(g_hwb.generation));
             spin_unlock_irqrestore(&g_hwb_lock, flags);
 
             bs_hwb_record_hit(i, regs->pc, regs->pc, hook_regs->regs[1], regs);
@@ -1682,8 +1688,8 @@ static int bs_hwb_watchpoint_work(struct pt_regs *hook_regs)
         return 0;
     }
 
-    bs_hwb_write_dbg_reg(BS_HWB_DBG_WCR, best_slot, 0);
-    bs_hwb_write_dbg_reg(BS_HWB_DBG_WVR, best_slot, 0);
+    bs_hwb_restore_slot_current_cpu(0, (uint32_t)best_slot,
+                                    READ_ONCE(g_hwb.generation));
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 
     bs_hwb_record_hit((uint32_t)best_point, regs->pc, fault_addr, esr, regs);

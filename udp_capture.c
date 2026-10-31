@@ -227,7 +227,10 @@ static int udp_ensure_ring(void)
         vfree(pool);
         return -ENOMEM;
     }
-    g_udp_scratch = kvzalloc(sizeof(*g_udp_scratch) * num_possible_cpus(),
+    /* The probe indexes this with smp_processor_id() and the init loop stores
+     * by raw cpu id, so cover every possible id: num_possible_cpus() only
+     * equals nr_cpu_ids for a contiguous cpu_possible_mask. */
+    g_udp_scratch = kvzalloc(sizeof(*g_udp_scratch) * nr_cpu_ids,
                              GFP_KERNEL);
     if (!g_udp_scratch) {
         vfree(stage);
