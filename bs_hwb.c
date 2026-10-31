@@ -97,12 +97,13 @@ struct bs_hwb_session {
     int active_snapshot;
 };
 
-/* Debug-register capture is cross-process introspection. Accept init-userns
- * CAP_SYS_PTRACE, or plain uid 0 (some su implementations drop caps). */
+/* Debug-register capture is cross-process introspection. The control fd is
+ * already restricted to uid<=1000 by the install gate in main.c, so keep that
+ * same boundary here instead of locking out system-uid clients; also accept
+ * CAP_SYS_PTRACE (init userns) for privileged callers. */
 static bool bs_hwb_may_ptrace(void)
 {
-    return capable(CAP_SYS_PTRACE) ||
-           uid_eq(current_euid(), GLOBAL_ROOT_UID);
+    return capable(CAP_SYS_PTRACE) || current_uid().val <= 1000;
 }
 
 static DEFINE_MUTEX(g_hwb_mutex);
@@ -1770,10 +1771,13 @@ out_partial:
 
 static void bs_hwb_hooks_remove_locked(void)
 {
+    int failed = 0;
+
     if (!g_hwb.hooks_installed && !bs_hwb_any_hook_installed())
         return;
 
-    bs_hwb_hook_remove_many(g_hwb_finish_hooks, ARRAY_SIZE(g_hwb_finish_hooks));
+    failed += bs_hwb_hook_remove_many(g_hwb_finish_hooks,
+                                      ARRAY_SIZE(g_hwb_finish_hooks));
     /*
      * finish_task_switch() runs before __schedule() reenables preemption.
      * The grace period drains CPUs that entered the patched entry before it
@@ -1782,11 +1786,13 @@ static void bs_hwb_hooks_remove_locked(void)
     synchronize_rcu();
     wait_event(g_hwb_finish_return_wait,
                atomic_read(&g_hwb_finish_returns_inflight) == 0);
-    if (bs_hwb_hook_remove_many(g_hwb_exception_hooks,
-                                ARRAY_SIZE(g_hwb_exception_hooks))) {
+    failed += bs_hwb_hook_remove_many(g_hwb_exception_hooks,
+                                      ARRAY_SIZE(g_hwb_exception_hooks));
+    if (failed) {
         /* Keep the module pin: rmmod must not free text that is still
          * branched into. The pin is released only by a clean restore. */
-        pr_err("hwb: exception hooks still patched, keeping module pinned\n");
+        pr_err("hwb: %d hook(s) still patched, keeping module pinned\n",
+               failed);
         return;
     }
     g_hwb.hooks_installed = 0;
