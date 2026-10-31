@@ -362,7 +362,7 @@ static void bs_hwb_enable_cpu(void)
                  "msr mdscr_el1, %[val]\n\t"
                  "isb\n\t"
                  : [val] "=&r"(mdscr)
-                 : [mask] "r"((uint64_t)((1UL << 15) | (1UL << 13)))
+                 : [mask] "r"((uint64_t)(1UL << 15))
                  : "memory");
 }
 
@@ -375,7 +375,7 @@ static void __maybe_unused bs_hwb_disable_cpu(void)
                  "msr mdscr_el1, %[val]\n\t"
                  "isb\n\t"
                  : [val] "=&r"(mdscr)
-                 : [mask] "r"((uint64_t)((1UL << 15) | (1UL << 13)))
+                 : [mask] "r"((uint64_t)(1UL << 15))
                  : "memory");
 
     asm volatile("mov x0, #1\n\t"
@@ -1333,9 +1333,10 @@ struct bs_hwb_cpu_clear_arg {
     uint32_t used_brps;
     uint32_t used_wrps;
     int disable_debug;
+    u64 generation;
 };
 
-static void bs_hwb_clear_matching_current_cpu_locked(void);
+static void bs_hwb_clear_matching_current_cpu_locked(u64 generation);
 
 static void bs_hwb_clear_cpu_cb(void *data)
 {
@@ -1346,8 +1347,76 @@ static void bs_hwb_clear_cpu_cb(void *data)
      * Blindly zeroing every slot would wipe this CPU's kernel perf/ptrace
      * watchpoints, whose bookkeeping lives in bp_on_reg[]/wp_on_reg[]. */
     spin_lock_irqsave(&g_hwb_lock, flags);
-    bs_hwb_clear_matching_current_cpu_locked();
+    bs_hwb_clear_matching_current_cpu_locked(arg->generation);
     spin_unlock_irqrestore(&g_hwb_lock, flags);
+}
+
+/* Per-CPU copy of the debug slots this session displaced. The kernel's
+ * hw_breakpoint layer keeps its own bookkeeping (bp_on_reg[]/wp_on_reg[]) and
+ * only toggles the enable bit, so overwriting a slot without restoring the
+ * original address/control silently kills a ptrace/perf breakpoint. */
+static DEFINE_PER_CPU(u64, g_hwb_sav_brp_a[BS_HWB_MAX_HW_SLOTS]);
+static DEFINE_PER_CPU(u64, g_hwb_sav_brp_c[BS_HWB_MAX_HW_SLOTS]);
+static DEFINE_PER_CPU(u64, g_hwb_sav_wrp_a[BS_HWB_MAX_HW_SLOTS]);
+static DEFINE_PER_CPU(u64, g_hwb_sav_wrp_c[BS_HWB_MAX_HW_SLOTS]);
+static DEFINE_PER_CPU(u32, g_hwb_sav_mask);
+static DEFINE_PER_CPU(u64, g_hwb_sav_gen);
+
+static void bs_hwb_save_slots_current_cpu(void)
+{
+    uint32_t i;
+    u32 mask = 0;
+
+    if (this_cpu_read(g_hwb_sav_gen) == g_hwb.generation)
+        return;
+
+    for (i = 0; i < g_hwb.used_brps && i < BS_HWB_MAX_HW_SLOTS; i++) {
+        this_cpu_write(g_hwb_sav_brp_a[i],
+                       bs_hwb_read_dbg_reg(BS_HWB_DBG_BVR, (int)i));
+        this_cpu_write(g_hwb_sav_brp_c[i],
+                       bs_hwb_read_dbg_reg(BS_HWB_DBG_BCR, (int)i));
+        mask |= 1U << i;
+    }
+    for (i = 0; i < g_hwb.used_wrps && i < BS_HWB_MAX_HW_SLOTS; i++) {
+        this_cpu_write(g_hwb_sav_wrp_a[i],
+                       bs_hwb_read_dbg_reg(BS_HWB_DBG_WVR, (int)i));
+        this_cpu_write(g_hwb_sav_wrp_c[i],
+                       bs_hwb_read_dbg_reg(BS_HWB_DBG_WCR, (int)i));
+        mask |= 1U << (16 + i);
+    }
+    this_cpu_write(g_hwb_sav_mask, mask);
+    this_cpu_write(g_hwb_sav_gen, g_hwb.generation);
+}
+
+static void bs_hwb_restore_slot_current_cpu(int is_exec, uint32_t slot,
+                                            u64 generation)
+{
+    u32 bit = 1U << (slot + (is_exec ? 0 : 16));
+
+    if (this_cpu_read(g_hwb_sav_gen) == generation &&
+        (this_cpu_read(g_hwb_sav_mask) & bit)) {
+        if (is_exec) {
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_BVR, (int)slot,
+                                 this_cpu_read(g_hwb_sav_brp_a[slot]));
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_BCR, (int)slot,
+                                 this_cpu_read(g_hwb_sav_brp_c[slot]));
+        } else {
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_WVR, (int)slot,
+                                 this_cpu_read(g_hwb_sav_wrp_a[slot]));
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_WCR, (int)slot,
+                                 this_cpu_read(g_hwb_sav_wrp_c[slot]));
+        }
+        this_cpu_write(g_hwb_sav_mask,
+                       this_cpu_read(g_hwb_sav_mask) & ~bit);
+        return;
+    }
+    if (is_exec) {
+        bs_hwb_write_dbg_reg(BS_HWB_DBG_BCR, (int)slot, 0);
+        bs_hwb_write_dbg_reg(BS_HWB_DBG_BVR, (int)slot, 0);
+    } else {
+        bs_hwb_write_dbg_reg(BS_HWB_DBG_WCR, (int)slot, 0);
+        bs_hwb_write_dbg_reg(BS_HWB_DBG_WVR, (int)slot, 0);
+    }
 }
 
 static void bs_hwb_install_current_cpu_locked(void)
@@ -1360,6 +1429,7 @@ static void bs_hwb_install_current_cpu_locked(void)
         return;
 
     bs_hwb_enable_cpu();
+    bs_hwb_save_slots_current_cpu();
 
     for (i = 0; i < g_hwb.point_count; i++) {
         uint64_t addr;
@@ -1394,7 +1464,7 @@ static void bs_hwb_refresh_cpu_cb(void *data)
     if (g_hwb.configured && current == READ_ONCE(g_hwb.target))
         bs_hwb_install_current_cpu_locked();
     else
-        bs_hwb_clear_matching_current_cpu_locked();
+        bs_hwb_clear_matching_current_cpu_locked(READ_ONCE(g_hwb.generation));
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 }
 
@@ -1598,7 +1668,7 @@ static int bs_hwb_watchpoint_work(struct pt_regs *hook_regs)
     return 1;
 }
 
-static void bs_hwb_clear_matching_current_cpu_locked(void)
+static void bs_hwb_clear_matching_current_cpu_locked(u64 generation)
 {
     uint32_t brp_slot = 0;
     uint32_t wrp_slot = 0;
@@ -1622,10 +1692,8 @@ static void bs_hwb_clear_matching_current_cpu_locked(void)
             slot_ctrl = bs_hwb_read_dbg_reg(BS_HWB_DBG_BCR,
                                              (int)brp_slot);
             if (slot_ctrl && slot_addr == addr &&
-                ((slot_ctrl & ~0x1ULL) == ctrl)) {
-                bs_hwb_write_dbg_reg(BS_HWB_DBG_BCR, (int)brp_slot, 0);
-                bs_hwb_write_dbg_reg(BS_HWB_DBG_BVR, (int)brp_slot, 0);
-            }
+                ((slot_ctrl & ~0x1ULL) == ctrl))
+                bs_hwb_restore_slot_current_cpu(1, brp_slot, generation);
             brp_slot++;
         } else {
             if (wrp_slot >= g_hwb.used_wrps)
@@ -1635,10 +1703,8 @@ static void bs_hwb_clear_matching_current_cpu_locked(void)
             slot_ctrl = bs_hwb_read_dbg_reg(BS_HWB_DBG_WCR,
                                              (int)wrp_slot);
             if (slot_ctrl && slot_addr == addr &&
-                ((slot_ctrl & ~0x1ULL) == ctrl)) {
-                bs_hwb_write_dbg_reg(BS_HWB_DBG_WCR, (int)wrp_slot, 0);
-                bs_hwb_write_dbg_reg(BS_HWB_DBG_WVR, (int)wrp_slot, 0);
-            }
+                ((slot_ctrl & ~0x1ULL) == ctrl))
+                bs_hwb_restore_slot_current_cpu(0, wrp_slot, generation);
             wrp_slot++;
         }
     }
@@ -1671,7 +1737,7 @@ bs_hwb_finish_task_switch_return_work(
         if (current == g_hwb.target)
             bs_hwb_install_current_cpu_locked();
         else
-            bs_hwb_clear_matching_current_cpu_locked();
+            bs_hwb_clear_matching_current_cpu_locked(generation);
     }
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 
@@ -1810,6 +1876,7 @@ static void bs_hwb_stop_locked(void)
     int cpu;
 
     spin_lock_irqsave(&g_hwb_lock, flags);
+    arg.generation = g_hwb.generation;
     g_hwb.generation++;
     if (!g_hwb.generation)
         g_hwb.generation = 1;
@@ -1834,9 +1901,12 @@ static void bs_hwb_stop_locked(void)
     bs_hwb_hooks_remove_locked();
 
     spin_lock_irqsave(&g_hwb_lock, flags);
+    /* Never retain a pointer to a file that is being destroyed. A failed
+     * restore is retried from CLEAR or any control-fd close (see
+     * bs_hwb_release_owner), which keys off hooks_installed, not owner. */
+    g_hwb.owner = NULL;
     if (!g_hwb.hooks_installed) {
         g_hwb.target_tid = 0;
-        g_hwb.owner = NULL;
         g_hwb.point_count = 0;
         g_hwb.used_brps = 0;
         g_hwb.used_wrps = 0;
@@ -2094,7 +2164,7 @@ void bs_hwb_release_owner(struct file *owner)
         return;
 
     spin_lock_irqsave(&g_hwb_lock, flags);
-    should_clear = (g_hwb.configured || g_hwb.hooks_installed) && g_hwb.owner == owner;
+    should_clear = g_hwb.configured ? (g_hwb.owner == owner) : g_hwb.hooks_installed;
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 
     if (!should_clear)
@@ -2102,14 +2172,10 @@ void bs_hwb_release_owner(struct file *owner)
 
     mutex_lock(&g_hwb_mutex);
     spin_lock_irqsave(&g_hwb_lock, flags);
-    should_clear = (g_hwb.configured || g_hwb.hooks_installed) && g_hwb.owner == owner;
+    should_clear = g_hwb.configured ? (g_hwb.owner == owner) : g_hwb.hooks_installed;
     spin_unlock_irqrestore(&g_hwb_lock, flags);
     if (should_clear)
         bs_hwb_stop_locked();
-    spin_lock_irqsave(&g_hwb_lock, flags);
-    if (g_hwb.hooks_installed && g_hwb.owner == owner)
-        g_hwb.owner = NULL;     /* file is going away; the module pin keeps it alive */
-    spin_unlock_irqrestore(&g_hwb_lock, flags);
     mutex_unlock(&g_hwb_mutex);
 }
 
@@ -2117,7 +2183,7 @@ void bs_hwb_exit(void)
 {
     mutex_lock(&g_hwb_mutex);
     bs_hwb_stop_locked();
-    if (g_hwb.hooks_installed) {
+    if (g_hwb.hooks_installed || bs_hwb_any_hook_installed()) {
         /* Should be unreachable (the module pin keeps rmmod away); do not free
          * anything that the still-patched entry could jump into. */
         pr_err("hwb: hooks not restored at exit, refusing teardown\n");
