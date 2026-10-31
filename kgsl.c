@@ -1894,10 +1894,8 @@ int kgsl_hide_init(void)
     else
         g_dcd_ok = true;
 
-    if (!g_kca_ok && !g_kia_ok && !g_dcd_ok) {
-        pr_err("kgsl hide: no hooks armed\n");
+    if (!g_kca_ok && !g_kia_ok && !g_dcd_ok)
         return -ENOENT;
-    }
 
     bs_info("kgsl hide armed: kca=%d kia=%d dcd=%d\n",
             g_kca_ok, g_kia_ok, g_dcd_ok);

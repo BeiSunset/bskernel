@@ -318,7 +318,9 @@ static void __init remove_inte_proc_entries(void)
 /* Default to 6: skip the syscall-table hook (unstable on GKI/CFI kernels)
  * and install the fd through the reboot kprobe instead. */
 static int bs_stage = BS_STAGE_NO_SYSCALL;
-module_param(bs_stage, int, 0);
+/* Neutral parameter name: the sysfs node should not advertise the stage
+ * machinery. The loader is the only writer. */
+module_param_named(p, bs_stage, int, 0);
 static bool g_mem_inited;
 static bool g_file_inited;
 

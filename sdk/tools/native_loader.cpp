@@ -1217,7 +1217,7 @@ int main(int argc, char** argv) {
 
     std::string params;
     if (!stage.empty()) {
-        params = "bs_stage=" + stage;
+        params = "p=" + stage;
     }
 
 

@@ -123,12 +123,9 @@ static bool g_touch_proxy_installed;
 /* Set while touch_exit() drains the stop-read work: a work item queued after
  * cancel_work_sync() would run module text after rmmod has freed it. */
 static bool g_touch_exiting;
-/* The proxy pins the module around evdev_read(), which may block until the
- * next input event: safe, but it keeps rmmod at -EBUSY for that whole time.
- * bs_touch_pin=0 restores the old unloadable-anytime behaviour (narrow UAF
- * window) for callers that need to unload while a reader is blocked. */
-static int bs_touch_pin __read_mostly = 1;
-module_param(bs_touch_pin, int, 0);
+/* The proxy pins the module around evdev_read(), which may block until the next
+ * input event. That keeps rmmod at -EBUSY for that whole time, which is the
+ * intended safe behaviour; there is no runtime switch to disable it. */
 /* Frame bookkeeping lives in file scope so touch_exit() can reset it. */
 static bool g_touch_first_down;
 static struct input_event g_touch_read_events[TOUCH_MAX_EVENTS];
@@ -458,8 +455,7 @@ static ssize_t touch_read_proxy(struct file *file, char __user *buf,
 {
     ssize_t ret;
 
-    if (!bs_touch_pin)
-        return touch_read_proxy_impl(file, buf, count, pos);
+
     if (!try_module_get(THIS_MODULE))
         return -ENODEV;
     ret = touch_read_proxy_impl(file, buf, count, pos);

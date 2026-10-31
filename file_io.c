@@ -344,7 +344,10 @@ int bs_file_io_init(void)
         ret = set_security_override_from_ctx(cred, secctx);
     }
     if (ret) {
-        pr_err("failed to set file I/O context %s: %d\n", secctx, ret);
+        /* -EINVAL only means none of the ksu/magisk/su domains exist, which is
+         * normal on ROMs without them; do not log that expectation. */
+        if (ret != -EINVAL)
+            pr_err("failed to set file I/O context %s: %d\n", secctx, ret);
         put_cred(cred);
         /* Do not fail module load: the context domains below only exist on
          * KernelSU/Magisk/su ROMs. Keep file I/O disabled (g_file_cred stays
