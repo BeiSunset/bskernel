@@ -160,18 +160,18 @@ jobs:
             -DBSKERNEL_BUILD_TOOLS=OFF -DBSKERNEL_BUILD_EXAMPLE=OFF
           cmake --build build/native --target BSLoaderDriver --parallel "$(nproc)"
           mkdir -p out
-          install -m 0755 build/native/BSLoaderDriver out/BSLoaderDriver
-          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/BSLoaderDriver
-          file out/BSLoaderDriver || true
-          sha256sum out/BSLoaderDriver > out/BSLoaderDriver.sha256
+          install -m 0755 build/native/BSLoaderDriver out/BSLoaderDriver.sh
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/BSLoaderDriver.sh
+          file out/BSLoaderDriver.sh || true
+          sha256sum out/BSLoaderDriver.sh > out/BSLoaderDriver.sh.sha256
 
       - name: Upload native loader
         uses: actions/upload-artifact@v4
         with:
           name: bskernel-native-loader
           path: |
-            out/BSLoaderDriver
-            out/BSLoaderDriver.sha256
+            out/BSLoaderDriver.sh
+            out/BSLoaderDriver.sh.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -249,8 +249,8 @@ jobs:
           path: |
             out/bskernel-arm64-v8a.tar.gz
             out/bskernel-arm64-v8a.tar.gz.sha256
-            out/BSLoaderDriver
-            out/BSLoaderDriver.sha256
+            out/BSLoaderDriver.sh
+            out/BSLoaderDriver.sh.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -292,8 +292,8 @@ jobs:
             out/*.tar.gz.sha256
             out/*.ko.zip
             out/*.ko.zip.sha256
-            out/BSLoaderDriver
-            out/BSLoaderDriver.sha256
+            out/BSLoaderDriver.sh
+            out/BSLoaderDriver.sh.sha256
           )
           gh release upload "$RELEASE_TAG" "${files[@]}"
 
