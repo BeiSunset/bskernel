@@ -148,6 +148,12 @@ jobs:
           python3 sdk/tools/gen_embedded_modules.py sdk/tools/bs_native_modules.h modules
           ls -l sdk/tools/bs_native_modules.h
 
+      - name: Fetch mbedTLS for the HTTPS version check
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v3.6.2 https://github.com/Mbed-TLS/mbedtls.git third_party/mbedtls
+          git -C third_party/mbedtls rev-parse HEAD
+
       - name: Build BSLoADERDriver with the NDK
         run: |
           set -euo pipefail
@@ -157,6 +163,8 @@ jobs:
             -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
             -DBSKERNEL_BUILD_NATIVE_LOADER=ON \
             -DBSKERNEL_EMBEDDED_HEADER="$PWD/sdk/tools" \
+            -DBSKERNEL_USE_MBEDTLS=ON \
+            -DBSKERNEL_MBEDTLS_DIR="$PWD/third_party/mbedtls" \
             -DBSKERNEL_BUILD_TOOLS=OFF -DBSKERNEL_BUILD_EXAMPLE=OFF
           cmake --build build/native --target BSLoaderDriver --parallel "$(nproc)"
           mkdir -p out

@@ -17,14 +17,21 @@
 #include <string>
 #include <vector>
 
-#include <fcntl.h>
-#include <netdb.h>
-#include <poll.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 #include <zlib.h>
+
+#if !defined(BSKERNEL_HTTPS)
+#error "mbedTLS support (BSKERNEL_HTTPS) is required for the version check"
+#endif
+
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/x509_crt.h>
 
 #if defined(BSKERNEL_EMBEDDED_MODULES)
 #include "bs_native_modules.h"
@@ -349,60 +356,181 @@ static bool decode_and_verify(const embedded_module& module,
     return decode_module(module, raw) && verify_module(module, raw);
 }
 
-/* ---- version check ----
- *
- * The old shell read https://sharechain.qq.com (TLS). The native loader has no
- * TLS stack, so it performs the reachability half of that check (TCP connect
- * to the same endpoint with a short timeout) and keeps the shell's exact
- * messages: unreachable -> skip with a warning, reachable -> "up to date".
- */
-static bool tcp_probe(const char* host, const char* port, int timeout_ms) {
-    struct addrinfo hints;
-    std::memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    struct addrinfo* addresses = nullptr;
-    if (getaddrinfo(host, port, &hints, &addresses) != 0)
-        return false;
+/* ---- version check (real HTTPS via mbedTLS, strict pass/fail) ---- */
 
-    bool connected = false;
-    for (struct addrinfo* entry = addresses; entry && !connected;
-         entry = entry->ai_next) {
-        const int fd = socket(entry->ai_family, entry->ai_socktype, 0);
-        if (fd < 0)
+static const char* const kVersionUrl =
+    "/2687bec922cbed3dc7b54770e8337f7f?qq_aio_chat_type=2";
+
+/* Trust anchors from the platform store; silently skip unreadable entries. */
+static void load_system_ca(mbedtls_x509_crt* chain) {
+    DIR* dir = opendir("/system/etc/security/cacerts");
+    if (!dir)
+        return;
+    while (struct dirent* entry = readdir(dir)) {
+        if (entry->d_name[0] == '.')
             continue;
-        const int flags = fcntl(fd, F_GETFL, 0);
-        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            close(fd);
-            continue;
-        }
-        int result = connect(fd, entry->ai_addr, entry->ai_addrlen);
-        if (result != 0 && errno == EINPROGRESS) {
-            struct pollfd poller;
-            poller.fd = fd;
-            poller.events = POLLOUT;
-            poller.revents = 0;
-            if (poll(&poller, 1, timeout_ms) > 0) {
-                int socket_error = 0;
-                socklen_t length = sizeof(socket_error);
-                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error,
-                               &length) == 0 &&
-                    socket_error == 0)
-                    result = 0;
-            }
-        }
-        if (result == 0)
-            connected = true;
-        close(fd);
+        char path[512];
+        std::snprintf(path, sizeof(path), "/system/etc/security/cacerts/%s",
+                      entry->d_name);
+        (void)mbedtls_x509_crt_parse_file(chain, path);
     }
-    freeaddrinfo(addresses);
-    return connected;
+    closedir(dir);
+}
+
+/* Returns the page body, or false when the request could not be completed. */
+static bool https_get(const char* host, const char* path, std::string* body) {
+    mbedtls_net_context server;
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+    mbedtls_x509_crt ca;
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context drbg;
+    mbedtls_net_init(&server);
+    mbedtls_ssl_init(&ssl);
+    mbedtls_ssl_config_init(&conf);
+    mbedtls_x509_crt_init(&ca);
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&drbg);
+
+    bool ok_result = false;
+    const char* personal = "bsloader";
+    char request[512];
+
+    if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
+                              reinterpret_cast<const unsigned char*>(personal),
+                              std::strlen(personal)) != 0)
+        goto out;
+    load_system_ca(&ca);
+    if (ca.next == nullptr)
+        goto out;
+
+    if (mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
+                                    MBEDTLS_SSL_TRANSPORT_STREAM,
+                                    MBEDTLS_SSL_PRESET_DEFAULT) != 0)
+        goto out;
+    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &drbg);
+    mbedtls_ssl_conf_ca_chain(&conf, &ca, nullptr);
+
+    if (mbedtls_ssl_setup(&ssl, &conf) != 0)
+        goto out;
+    if (mbedtls_ssl_set_hostname(&ssl, host) != 0)
+        goto out;
+    if (mbedtls_net_connect(&server, host, "443",
+                            MBEDTLS_NET_PROTO_TCP) != 0)
+        goto out;
+
+    {
+        struct timeval timeout;
+        timeout.tv_sec = 5;
+        timeout.tv_usec = 0;
+        (void)setsockopt(server.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(timeout));
+        (void)setsockopt(server.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                         sizeof(timeout));
+    }
+
+    mbedtls_ssl_set_bio(&ssl, &server, mbedtls_net_send, mbedtls_net_recv,
+                        nullptr);
+    if (mbedtls_ssl_handshake(&ssl) != 0)
+        goto out;
+
+    std::snprintf(request, sizeof(request),
+                  "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: bsloader/%s\r\n"
+                  "Accept: */*\r\nConnection: close\r\n\r\n",
+                  path, host, kVersionFull);
+    if (mbedtls_ssl_write(&ssl,
+                          reinterpret_cast<const unsigned char*>(request),
+                          std::strlen(request)) <= 0)
+        goto out;
+
+    {
+        std::string response;
+        unsigned char buffer[2048];
+        for (;;) {
+            const int got = mbedtls_ssl_read(&ssl, buffer, sizeof(buffer));
+            if (got == MBEDTLS_ERR_SSL_WANT_READ ||
+                got == MBEDTLS_ERR_SSL_WANT_WRITE)
+                continue;
+            if (got <= 0)
+                break;
+            response.append(reinterpret_cast<const char*>(buffer),
+                            size_t(got));
+            if (response.size() > 512u * 1024u)
+                break;
+        }
+        if (response.empty())
+            goto out;
+        const size_t body_start = response.find("\r\n\r\n");
+        if (body_start == std::string::npos)
+            goto out;
+        *body = response.substr(body_start + 4);
+        ok_result = true;
+    }
+
+out:
+    mbedtls_ssl_close_notify(&ssl);
+    mbedtls_net_free(&server);
+    mbedtls_ssl_free(&ssl);
+    mbedtls_ssl_config_free(&conf);
+    mbedtls_x509_crt_free(&ca);
+    mbedtls_ctr_drbg_free(&drbg);
+    mbedtls_entropy_free(&entropy);
+    return ok_result;
+}
+
+static bool extract_html_content(const std::string& page, std::string* out) {
+    const std::string key = "\"html_content\"";
+    size_t at = page.find(key);
+    if (at == std::string::npos)
+        return false;
+    at = page.find('"', at + key.size());
+    if (at == std::string::npos)
+        return false;
+    const size_t end = page.find('"', at + 1);
+    if (end == std::string::npos)
+        return false;
+    *out = page.substr(at + 1, end - at - 1);
+    return true;
+}
+
+static bool valid_version(const std::string& text) {
+    if (text.empty())
+        return false;
+    for (char value : text) {
+        if (!(value >= '0' && value <= '9') && value != '.')
+            return false;
+    }
+    return true;
+}
+
+/* >0 when right is newer than left. */
+static int compare_version(const std::string& left, const std::string& right) {
+    int l[3] = {0, 0, 0};
+    int r[3] = {0, 0, 0};
+    std::sscanf(left.c_str(), "%d.%d.%d", &l[0], &l[1], &l[2]);
+    std::sscanf(right.c_str(), "%d.%d.%d", &r[0], &r[1], &r[2]);
+    for (int i = 0; i < 3; ++i) {
+        if (r[i] != l[i])
+            return r[i] - l[i];
+    }
+    return 0;
 }
 
 static bool check_version() {
-    if (!tcp_probe("sharechain.qq.com", "443", 4000)) {
+    std::string page;
+    if (!https_get("sharechain.qq.com", kVersionUrl, &page)) {
         warn("无法连接版本服务器");
         err("驱动版本验证失败,请检查网络后重试!");
+        return false;
+    }
+    std::string remote;
+    if (!extract_html_content(page, &remote) || !valid_version(remote)) {
+        err("驱动版本验证失败,版本号格式无效!");
+        return false;
+    }
+    if (compare_version(kVersionFull, remote) > 0) {
+        err("驱动版本验证失败,请更新最新版本!");
         return false;
     }
     ok("驱动版本验证通过,当前已是最新版本!");
