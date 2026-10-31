@@ -1,13 +1,12 @@
 /*
  * BSLoADERDriver - self-contained native loader for the bs kernel module.
  *
- * The per-KMI module binaries are embedded at build time (bs_native_modules.h)
- * as zlib-compressed, XOR-obfuscated blobs. They are decoded and verified in
- * memory and loaded through memfd_create() + finit_module(), so no .ko file is
- * ever written to the filesystem and no shell/insmod is involved.
- *
- * A missing embedded table is a hard build error: this tool deliberately has
- * no on-disk module fallback.
+ * The six per-KMI module images are embedded at build time
+ * (bs_native_modules.h) as zlib-compressed, XOR-obfuscated blobs. They are
+ * decoded and SHA-256 verified in memory and loaded with memfd_create() +
+ * finit_module(), so no .ko file is ever written to the filesystem and no
+ * shell or insmod is involved. The menu, banner and status flow mirror the old
+ * shell loader.
  */
 #include <cerrno>
 #include <cstddef>
@@ -29,7 +28,6 @@
 #error "bs_native_modules.h is required"
 #endif
 
-/* arm64 (asm-generic) syscall numbers; the macros exist on current NDKs. */
 #ifndef __NR_memfd_create
 #define __NR_memfd_create 279
 #endif
@@ -39,17 +37,14 @@
 #ifndef __NR_delete_module
 #define __NR_delete_module 106
 #endif
-
-/* <linux/memfd.h> is not part of the allowed header set. */
 #ifndef MFD_CLOEXEC
 #define MFD_CLOEXEC 0x0001U
 #endif
 
-/* asm-generic/fcntl.h: O_NONBLOCK = 00004000 == 0x800 on arm64/x86_64. */
 static constexpr long kO_NONBLOCK = 0x800;
-
-static constexpr const char* kVersion = "1.0.0";
-/* A corrupt/forged embedded table must never trigger a huge allocation. */
+static constexpr const char* kVersion = "1.0";
+static constexpr const char* kVersionFull = "1.0.0";
+static constexpr const char* kTgUrl = "https://t.me/BAIFRE";
 static constexpr unsigned int kMaxRawModuleBytes = 256u * 1024u * 1024u;
 
 static constexpr int kExitOk = 0;
@@ -76,9 +71,56 @@ static constexpr size_t kKmiTargetCount =
     sizeof(kKmiTargets) / sizeof(kKmiTargets[0]);
 static_assert(kKmiTargetCount == 6, "exactly six KMI targets are supported");
 
+/* ---- ANSI UI helpers (same layout as the old shell loader) ---- */
+
+static const char* const kReset = "\033[0m";
+static const char* const kCyan = "\033[1;36m";
+static const char* const kGreen = "\033[1;32m";
+static const char* const kYellow = "\033[1;33m";
+static const char* const kRed = "\033[1;31m";
+static const char* const kMagenta = "\033[1;35m";
+static const char* const kTeal = "\033[38;2;110;195;198m";
+static const char* const kWarnRed = "\033[38;2;210;120;112m";
+
 static bool g_quiet = false;
 
-/* ---- SHA-256 (FIPS 180-4, public-domain style, no third-party code) ---- */
+static void info(const char* text) {
+    if (!g_quiet)
+        std::printf("%s[-] %s%s\n", kYellow, text, kReset);
+}
+
+static void ok(const char* text) {
+    if (!g_quiet)
+        std::printf("%s[√] %s%s\n", kGreen, text, kReset);
+}
+
+static void err(const char* text) {
+    std::printf("%s[x] %s%s\n", kRed, text, kReset);
+}
+
+static void banner() {
+    std::printf("\033[2J\033[H");
+    std::printf("%s<<<Welcome to BSKernel %s Driver!>>>%s\n\n", kYellow,
+                kVersion, kReset);
+    std::printf("%s", kMagenta);
+    std::puts("   ██████╗ ███████╗██╗██╗     ██╗   ██╗ ██████╗");
+    std::puts("   ██╔══██╗██╔════╝██║██║     ██║   ██║██╔═══██╗");
+    std::puts("   ██████╔╝█████╗  ██║██║     ██║   ██║██║   ██║");
+    std::puts("   ██╔══██╗██╔══╝  ██║██║     ██║   ██║██║   ██║");
+    std::puts("   ██████╔╝███████╗██║███████╗╚██████╔╝╚██████╔╝");
+    std::puts("   ╚═════╝ ╚══════╝╚═╝╚══════╝ ╚═════╝  ╚═════╝");
+    std::printf("%s", kReset);
+    std::printf("\n%s<<<欢迎使用 BSKernel 驱动加载>>>%s\n\n", kYellow, kReset);
+    std::printf("%s[!] 唯一官方 TG 地址如下，除以下地址外均为非官方：%s\n",
+                kMagenta, kReset);
+    std::printf("%s    %s%s\n", kTeal, kTgUrl, kReset);
+    std::printf("%s[!] 请仔细核对用户名，谨防相似名称的仿冒频道。%s\n\n",
+                kWarnRed, kReset);
+    std::printf("%s[!] 本人无任何收费项目，请不要轻易相信陌生人。%s\n\n",
+                kWarnRed, kReset);
+}
+
+/* ---- SHA-256 (FIPS 180-4, no third-party code) ---- */
 
 static const uint32_t kSha256Initial[8] = {
     0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
@@ -261,8 +303,6 @@ static bool digest_matches(const unsigned char digest[32],
     return true;
 }
 
-/* XOR-decode, inflate, then hash. Nothing may reach finit_module() unless the
- * decompressed bytes match the table's SHA-256 exactly. */
 static bool decode_and_verify(const embedded_module& module,
                               std::vector<unsigned char>& raw) {
     raw.clear();
@@ -313,9 +353,6 @@ static const char* errno_name(int error) {
 #ifdef EKEYREJECTED
     case EKEYREJECTED: return "-EKEYREJECTED";
 #endif
-#ifdef EHWPOISON
-    case EHWPOISON: return "-EHWPOISON";
-#endif
     default: return "-errno";
     }
 }
@@ -357,11 +394,11 @@ static int detect_kmi_index(std::string* release) {
     return -1;
 }
 
-static void print_supported(std::FILE* stream) {
-    std::fprintf(stream, "supported KMI:");
+static void print_supported() {
+    std::printf("%ssupported KMI:%s", kYellow, kReset);
     for (size_t i = 0; i < kKmiTargetCount; ++i)
-        std::fprintf(stream, " %s", kKmiTargets[i].kmi);
-    std::fputc('\n', stream);
+        std::printf(" %s", kKmiTargets[i].kmi);
+    std::putchar('\n');
 }
 
 /* ---- load / unload ---- */
@@ -382,8 +419,8 @@ static bool write_all(int fd, const unsigned char* data, size_t size) {
     return true;
 }
 
-/* Returns 0 on success, or a positive errno describing the first failure. */
-static int load_module_bytes(const unsigned char* data, size_t size) {
+static int load_module_bytes(const unsigned char* data, size_t size,
+                             const std::string& params) {
     const long raw_fd = syscall(__NR_memfd_create, "",
                                 static_cast<long>(MFD_CLOEXEC));
     if (raw_fd < 0)
@@ -394,9 +431,9 @@ static int load_module_bytes(const unsigned char* data, size_t size) {
     if (!write_all(fd, data, size)) {
         error = errno != 0 ? errno : EIO;
     } else if (::lseek(fd, 0, SEEK_SET) < 0) {
-        /* Older kernels read the module from the current file offset. */
         error = errno;
-    } else if (syscall(__NR_finit_module, static_cast<long>(fd), "", 0L) != 0) {
+    } else if (syscall(__NR_finit_module, static_cast<long>(fd),
+                       params.c_str(), 0L) != 0) {
         error = errno;
     }
 
@@ -404,151 +441,131 @@ static int load_module_bytes(const unsigned char* data, size_t size) {
     return error;
 }
 
-static int load_kmi(const char* kmi) {
+static int load_kmi(const char* kmi, const std::string& params,
+                    bool verify) {
     const embedded_module* entry = find_module(kmi);
     if (!entry) {
-        std::fprintf(stderr, "no embedded module for %s\n", kmi);
-        print_supported(stderr);
+        err("内置驱动中没有该内核版本");
+        print_supported();
         return kExitFailure;
     }
     if (is_module_loaded()) {
-        std::fputs("module 'bs' is already loaded; run --unload first\n",
-                   stderr);
-        return kExitFailure;
+        ok("内核模块加载成功!");
+        return kExitOk;
     }
 
     std::vector<unsigned char> ko;
-    if (!decode_and_verify(*entry, ko)) {
-        std::fprintf(stderr, "failed: integrity check failed for %s\n",
-                     entry->kmi);
+    if (verify) {
+        info("正在验证内置驱动...");
+        if (!decode_and_verify(*entry, ko)) {
+            err("驱动完整性验证失败!");
+            return kExitFailure;
+        }
+        ok("驱动完整性验证通过（6/6）");
+    } else if (!decode_and_verify(*entry, ko)) {
+        err("驱动解码失败!");
         return kExitFailure;
     }
 
-    if (!g_quiet) {
-        std::printf("loading %s ... ", entry->kmi);
-        std::fflush(stdout);
-    }
-    const int error = load_module_bytes(ko.data(), ko.size());
+    info("正在加载内核模块...");
+    const int error = load_module_bytes(ko.data(), ko.size(), params);
     if (error != 0) {
-        std::fprintf(stderr, "failed: %s (%d)\n", errno_name(error), error);
+        std::printf("%s[x] 内核模块加载失败!%s %s (%d)\n", kRed, kReset,
+                    errno_name(error), error);
         if (error == EEXIST)
-            std::fputs("hint: 'bs' is already loaded; use --unload first\n",
-                       stderr);
+            ok("内核模块加载成功!");
         return kExitFailure;
     }
-    if (!g_quiet)
-        std::puts("ok");
+    ok("内核模块加载成功!");
     return kExitOk;
 }
 
 static int unload_module() {
     if (!is_module_loaded()) {
-        std::fputs("module 'bs' is not loaded\n", stderr);
+        err("内核模块未加载");
         return kExitFailure;
     }
-    if (!g_quiet) {
-        std::fputs("unloading bs ... ", stdout);
-        std::fflush(stdout);
-    }
+    info("正在卸载内核模块...");
     const long result = syscall(__NR_delete_module, "bs", kO_NONBLOCK);
     if (result != 0) {
-        const int error = errno;
-        std::fprintf(stderr, "failed: %s (%d)\n", errno_name(error), error);
+        std::printf("%s[x] 卸载失败%s %s (%d)\n", kRed, kReset,
+                    errno_name(errno), errno);
         return kExitFailure;
     }
-    if (!g_quiet)
-        std::puts("ok");
+    ok("内核模块已卸载");
     return kExitOk;
 }
 
-/* ---- informational / interactive commands ---- */
+/* ---- commands ---- */
 
 static void list_modules() {
-    std::puts("embedded KMI modules (size = decompressed .ko):");
+    std::string release;
+    const int detected = detect_kmi_index(&release);
+    std::printf("内置驱动模块：\n");
     for (size_t i = 0; i < kKmiTargetCount; ++i) {
         const embedded_module* entry = find_module(kKmiTargets[i].kmi);
-        if (entry) {
-            std::printf("  %zu) %s (%s)  %u bytes\n", i + 1,
-                        kKmiTargets[i].kmi, kKmiTargets[i].series,
-                        entry->raw_size);
-        } else {
-            std::printf("  %zu) %s (%s)  not embedded\n", i + 1,
-                        kKmiTargets[i].kmi, kKmiTargets[i].series);
-        }
+        std::printf("  - %s", kKmiTargets[i].kmi);
+        if (entry)
+            std::printf("  (%u bytes)", entry->raw_size);
+        std::printf("%s\n",
+                    int(i) == detected ? "  <- 当前内核" : "");
     }
-
-    std::string release;
-    const int detected = detect_kmi_index(&release);
-    if (detected >= 0) {
-        std::printf("detected kernel: %s -> %s\n", release.c_str(),
-                    kKmiTargets[detected].kmi);
-    } else if (!release.empty()) {
-        std::printf("detected kernel: %s (unsupported)\n", release.c_str());
-    }
+    std::printf("\n当前内核：%s\n",
+                release.empty() ? "unknown" : release.c_str());
 }
 
-static void print_menu(const std::string& release, int detected) {
-    std::printf("BSLoaderDriver %s\n", kVersion);
-    if (detected >= 0) {
-        std::printf("detected kernel: %s -> %s\n", release.c_str(),
-                    kKmiTargets[detected].kmi);
-    } else if (!release.empty()) {
-        std::printf("detected kernel: %s (unsupported)\n", release.c_str());
-    }
-    std::puts("");
+static void show_menu(int detected) {
     for (size_t i = 0; i < kKmiTargetCount; ++i) {
-        std::printf("  %zu) %s%s\n", i + 1, kKmiTargets[i].kmi,
-                    int(i) == detected ? "  [suggested]" : "");
+        std::printf("%s[%zu] 内核版本：%-6s        （一个子方案）%s%s\n",
+                    kMagenta, i + 1, kKmiTargets[i].series,
+                    int(i) == detected ? "  [推荐]" : "", kReset);
     }
-    std::puts("  7) exit");
+    std::printf("%s[7] 退出程序%s\n", kMagenta, kReset);
 }
 
-static int run_menu() {
-    std::string release;
-    const int detected = detect_kmi_index(&release);
+static int interactive(const std::string& /*params*/, bool /*unused*/);
+
+static int run_menu(const std::string& release, int detected,
+                    const std::string& params, bool verify) {
+    std::printf("\n%s[-] 你的当前内核版本是：%s%s\n\n", kTeal, kReset,
+                release.empty() ? "unknown" : release.c_str());
+    std::printf("%s请根据当前内核版本，从列表中选择最接近的驱动方案安装：%s\n\n",
+                kYellow, kReset);
+    show_menu(detected);
+
     char line[64];
     for (;;) {
-        print_menu(release, detected);
-        if (detected >= 0) {
-            std::printf("select 1-%zu [%d] (7 = exit): ", kKmiTargetCount + 1,
-                        detected + 1);
-        } else {
-            std::printf("select 1-%zu (7 = exit): ", kKmiTargetCount + 1);
-        }
+        std::printf("\n[-] 请输入选项数字并回车：");
         std::fflush(stdout);
-
         if (!std::fgets(line, sizeof(line), stdin)) {
-            std::fputc('\n', stderr);
+            std::putchar('\n');
             return kExitUsage;
         }
         char* end = nullptr;
         const long choice = std::strtol(line, &end, 10);
         if (end == line) {
-            if (detected >= 0)
-                return load_kmi(kKmiTargets[detected].kmi);
-            std::fputs("enter a number\n", stderr);
+            err("请输入数字");
             continue;
         }
         if (choice == 7)
             return kExitOk;
         if (choice < 1 || choice > long(kKmiTargetCount)) {
-            std::fputs("invalid selection\n", stderr);
+            err("无效的选项");
             continue;
         }
-        return load_kmi(kKmiTargets[size_t(choice - 1)].kmi);
+        return load_kmi(kKmiTargets[size_t(choice - 1)].kmi, params, verify);
     }
 }
 
-static int run_auto() {
-    std::string release;
-    const int detected = detect_kmi_index(&release);
+static int run_auto(const std::string& release, int detected,
+                    const std::string& params, bool verify) {
     if (detected < 0) {
-        std::fprintf(stderr, "unsupported kernel release: %s\n",
-                     release.empty() ? "unknown" : release.c_str());
-        print_supported(stderr);
+        std::printf("%s[x] 不支持的内核版本：%s%s\n", kRed, kReset,
+                    release.empty() ? "unknown" : release.c_str());
+        print_supported();
         return kExitFailure;
     }
-    return load_kmi(kKmiTargets[detected].kmi);
+    return load_kmi(kKmiTargets[detected].kmi, params, verify);
 }
 
 /* ---- entry point ---- */
@@ -556,35 +573,38 @@ static int run_auto() {
 static void usage(std::FILE* stream, const char* program) {
     std::fprintf(
         stream,
-        "BSLoaderDriver %s - self-contained native loader for the bs module\n"
-        "Usage:\n"
-        "  %s [--kmi NAME | --auto | --list | --unload] [-q]\n"
-        "  %s --help | --version\n"
+        "BSKernel %s 驱动加载\n\n"
+        "用法:\n"
+        "  %s                     交互式选择内核版本并加载\n"
+        "  %s --auto              自动按当前内核选择最接近的方案并加载\n"
+        "  %s --list              列出内置的驱动模块\n"
+        "  %s --stage N           分阶段诊断（0=完整 1=仅兼容层 2=+内存 3=+文件 4=+hooks）\n"
+        "  %s --no-verify         跳过内置驱动的 sha256 校验\n"
+        "  %s --verbose           开启内核详细日志（默认静默，仅调试用）\n"
+        "  %s --unload            卸载已加载的模块\n"
+        "  %s --help              显示本帮助\n"
         "\n"
-        "  --kmi NAME   load the embedded module for NAME (e.g. android15-6.6)\n"
-        "  --auto       detect the running kernel and load the matching module\n"
-        "  --list       list embedded KMI modules and their sizes\n"
-        "  --unload     remove an already loaded 'bs' module\n"
-        "  -q           quiet: suppress status output\n"
-        "\n"
-        "No arguments shows a menu on a tty, otherwise behaves like --auto.\n"
-        "Exit codes: 0 success, 1 load failure/mismatch, 2 usage error,\n"
-        "            3 not root.\n",
-        kVersion, program, program);
+        "说明: 6 个内核版本的驱动已内嵌在本可执行文件里，加载时直接以\n"
+        "memfd + finit_module 注入内核，不会在磁盘上释放任何 .ko 文件。\n"
+        "需要 root 权限；本程序不依赖 shell 与 toybox 命令。\n",
+        kVersion, program, program, program, program, program, program,
+        program, program, program);
 }
 
 static int require_root() {
     if (geteuid() == 0)
         return kExitOk;
-    std::fputs("must run as root\n", stderr);
+    err("需要 root 权限，请用 su -c 运行");
     return kExitNotRoot;
 }
 
 int main(int argc, char** argv) {
-    enum class Action { kNone, kList, kLoad, kAuto, kUnload };
-
-    Action action = Action::kNone;
-    bool action_set = false;
+    bool auto_mode = false;
+    bool list_only = false;
+    bool unload = false;
+    bool verify = true;
+    bool verbose = false;
+    std::string stage;
     std::string kmi;
 
     for (int i = 1; i < argc; ++i) {
@@ -595,65 +615,92 @@ int main(int argc, char** argv) {
             return kExitOk;
         }
         if (std::strcmp(argument, "--version") == 0) {
-            std::printf("BSLoaderDriver %s\n", kVersion);
+            std::printf("BSKernel %s (loader %s)\n", kVersion, kVersionFull);
             return kExitOk;
         }
         if (std::strcmp(argument, "-q") == 0) {
             g_quiet = true;
             continue;
         }
-        if (action_set) {
-            std::fputs("only one of --kmi, --auto, --list or --unload is "
-                       "allowed\n",
-                       stderr);
-            return kExitUsage;
+        if (std::strcmp(argument, "--auto") == 0 ||
+            std::strcmp(argument, "-a") == 0) {
+            auto_mode = true;
+            continue;
         }
         if (std::strcmp(argument, "--list") == 0) {
-            action = Action::kList;
-        } else if (std::strcmp(argument, "--auto") == 0) {
-            action = Action::kAuto;
-        } else if (std::strcmp(argument, "--unload") == 0) {
-            action = Action::kUnload;
-        } else if (std::strcmp(argument, "--kmi") == 0) {
+            list_only = true;
+            continue;
+        }
+        if (std::strcmp(argument, "--unload") == 0) {
+            unload = true;
+            continue;
+        }
+        if (std::strcmp(argument, "--no-verify") == 0 ||
+            std::strcmp(argument, "-n") == 0) {
+            verify = false;
+            continue;
+        }
+        if (std::strcmp(argument, "--verbose") == 0 ||
+            std::strcmp(argument, "-v") == 0) {
+            verbose = true;
+            continue;
+        }
+        if (std::strcmp(argument, "--stage") == 0) {
             if (i + 1 >= argc) {
-                std::fputs("missing value for --kmi\n", stderr);
+                err("--stage 需要指定阶段（0-4）");
+                return kExitUsage;
+            }
+            stage = argv[++i];
+            continue;
+        }
+        if (std::strcmp(argument, "--kmi") == 0) {
+            if (i + 1 >= argc) {
+                err("--kmi 需要指定名称");
                 return kExitUsage;
             }
             kmi = argv[++i];
-            if (kmi.empty()) {
-                std::fputs("empty value for --kmi\n", stderr);
-                return kExitUsage;
-            }
-            action = Action::kLoad;
-        } else {
-            std::fprintf(stderr, "unknown option: %s (try --help)\n", argument);
-            return kExitUsage;
+            continue;
         }
-        action_set = true;
+        std::printf("%s[x] 未知参数：%s%s\n", kRed, kReset, argument);
+        usage(stderr, argv[0]);
+        return kExitUsage;
     }
 
-    if (action == Action::kList) {
+    if (!kmi.empty() && (auto_mode || list_only))
+        auto_mode = false;
+
+    if (list_only) {
         list_modules();
         return kExitOk;
-    }
-
-    if (action == Action::kNone) {
-        if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
-            const int root = require_root();
-            if (root != kExitOk)
-                return root;
-            return run_menu();
-        }
-        action = Action::kAuto;
     }
 
     const int root = require_root();
     if (root != kExitOk)
         return root;
 
-    if (action == Action::kUnload)
+    if (unload)
         return unload_module();
-    if (action == Action::kLoad)
-        return load_kmi(kmi.c_str());
-    return run_auto();
+
+    std::string params;
+    if (!stage.empty()) {
+        params = "bs_stage=" + stage;
+    }
+    if (verbose) {
+        if (!params.empty())
+            params += " ";
+        params += "bs_log_verbose=1";
+    }
+
+    std::string release;
+    const int detected = detect_kmi_index(&release);
+
+    if (!kmi.empty())
+        return load_kmi(kmi.c_str(), params, verify);
+
+    banner();
+    if (detected < 0 || auto_mode || !isatty(STDIN_FILENO) ||
+        !isatty(STDOUT_FILENO)) {
+        return run_auto(release, detected, params, verify);
+    }
+    return run_menu(release, detected, params, verify);
 }
