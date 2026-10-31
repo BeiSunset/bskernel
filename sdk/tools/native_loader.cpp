@@ -17,8 +17,10 @@
 #include <string>
 #include <vector>
 
+#include <dirent.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/time.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 #include <zlib.h>
