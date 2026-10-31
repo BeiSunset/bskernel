@@ -1,4 +1,4 @@
-#define pr_fmt(fmt) KBUILD_MODNAME ": udp-cap: " fmt
+#define pr_fmt(fmt) fmt
 #include "bs_log.h"
 
 #include <linux/cpumask.h>

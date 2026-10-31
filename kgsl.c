@@ -1,4 +1,4 @@
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#define pr_fmt(fmt) fmt
 #include "bs_log.h"
 
 #include <linux/cred.h>

@@ -340,7 +340,7 @@ static void cleanup_patch(struct work_struct *work)
     mm = live_mm(session);
     if (IS_ERR(mm)) {
         session->cleanup_failed = true;
-        pr_err("bs: sensor session cleanup lost target (%ld)\n", PTR_ERR(mm));
+        pr_err("sensor session cleanup lost target (%ld)\n", PTR_ERR(mm));
         return;
     }
     delta_ret = transfer(session, mm, session->patch.delta_addr, &zero, sizeof(zero), true);
@@ -353,7 +353,7 @@ static void cleanup_patch(struct work_struct *work)
     }
     if (delta_ret != sizeof(u64) || got_ret != sizeof(u64)) {
         session->cleanup_failed = true;
-        pr_err("bs: sensor session cleanup failed delta=%zd got=%zd\n", delta_ret, got_ret);
+        pr_err("sensor session cleanup failed delta=%zd got=%zd\n", delta_ret, got_ret);
     }
     mmput(mm);
 }
