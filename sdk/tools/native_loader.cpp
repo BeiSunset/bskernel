@@ -457,11 +457,23 @@ static int load_kmi(const char* kmi, const std::string& params,
     std::vector<unsigned char> ko;
     if (verify) {
         info("正在验证内置驱动...");
-        if (!decode_and_verify(*entry, ko)) {
+        std::vector<unsigned char> probe;
+        unsigned int verified = 0;
+        for (unsigned int i = 0; i < embedded_module_count; ++i) {
+            if (!decode_and_verify(embedded_modules[i], probe))
+                break;
+            ++verified;
+        }
+        if (verified != embedded_module_count ||
+            !decode_and_verify(*entry, ko)) {
             err("驱动完整性验证失败!");
             return kExitFailure;
         }
-        ok("驱动完整性验证通过（6/6）");
+        char verified_text[64];
+        std::snprintf(verified_text, sizeof(verified_text),
+                      "驱动完整性验证通过（%u/%u）", verified,
+                      embedded_module_count);
+        ok(verified_text);
     } else if (!decode_and_verify(*entry, ko)) {
         err("驱动解码失败!");
         return kExitFailure;
@@ -522,8 +534,6 @@ static void show_menu(int detected) {
     }
     std::printf("%s[7] 退出程序%s\n", kMagenta, kReset);
 }
-
-static int interactive(const std::string& /*params*/, bool /*unused*/);
 
 static int run_menu(const std::string& release, int detected,
                     const std::string& params, bool verify) {

@@ -207,17 +207,6 @@ jobs:
           merge-multiple: true
           path: out/bskernel-arm64-v8a/modules
 
-      - name: Build single-file BSLoaderDriver loader
-        run: |
-          set -euo pipefail
-          python3 -m py_compile BSLoaderDriver/build_single.py
-          python3 BSLoaderDriver/build_single.py out/bskernel-arm64-v8a/modules BSLoaderDriver.sh
-          chmod 755 BSLoaderDriver.sh
-          sh -n BSLoaderDriver.sh
-          if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck -S error BSLoaderDriver.sh
-          fi
-          sha256sum BSLoaderDriver.sh > BSLoaderDriver.sh.sha256
 
       - name: Verify modules and create distribution archive
         run: |
@@ -262,8 +251,6 @@ jobs:
             out/bskernel-arm64-v8a.tar.gz.sha256
             out/BSLoaderDriver
             out/BSLoaderDriver.sha256
-            BSLoaderDriver.sh
-            BSLoaderDriver.sh.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -305,8 +292,6 @@ jobs:
             out/*.tar.gz.sha256
             out/*.ko.zip
             out/*.ko.zip.sha256
-            BSLoaderDriver.sh
-            BSLoaderDriver.sh.sha256
             out/BSLoaderDriver
             out/BSLoaderDriver.sha256
           )
