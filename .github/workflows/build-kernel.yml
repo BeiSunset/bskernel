@@ -27,14 +27,12 @@ jobs:
           - android15-6.6
           - android16-6.12
           - android17-6.18
-    container:
-      image: ghcr.io/ylarod/ddk:${{ matrix.kmi }}-20260828
-      options: --privileged
     defaults:
       run:
         shell: bash
     env:
       KMI: ${{ matrix.kmi }}
+      IMAGE: ghcr.io/ylarod/ddk:${{ matrix.kmi }}-20260828
 
     steps:
       - name: Checkout source code
@@ -42,33 +40,41 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build kernel module
+      # The job no longer runs inside the DDK image: a job-level container is
+      # pulled before any step can run, and the 6.18 image alone does not fit in
+      # the runner's default free space. Freeing disk first and then pulling
+      # makes the build deterministic.
+      - name: Free runner disk space
         run: |
           set -euo pipefail
-          make -j"$(nproc)" KDIR="${KERNEL_SRC:?KERNEL_SRC is not set}"
-          test -s bs.ko
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+          df -h /
 
-      - name: Validate module ELF metadata
+      - name: Build, validate and strip in the DDK container
         run: |
           set -euo pipefail
-          llvm-readelf -h bs.ko | grep -q 'AArch64'
-          llvm-readelf -p .modinfo bs.ko > /tmp/modinfo.txt
-          grep -q 'name=bs' /tmp/modinfo.txt
-          grep -q 'license=GPL' /tmp/modinfo.txt
-          grep -q 'vermagic=' /tmp/modinfo.txt
-          echo '--- undefined symbols (first 40) ---'
-          llvm-nm -u bs.ko | sed -n '1,40p'
-
-      - name: Prepare kernel artifact
-        run: |
-          set -euo pipefail
-          mkdir -p out
-          output="bs-${KMI}.ko"
-          cp bs.ko "out/$output"
-          llvm-strip --strip-debug "out/$output"
-          test -s "out/$output"
-          cd out
-          sha256sum "$output" > "$output.sha256"
+          docker pull "$IMAGE"
+          docker run --rm --privileged -v "$PWD:/work" -w /work -e "KMI=$KMI" "$IMAGE" bash -lc '
+            set -euo pipefail
+            make -j"$(nproc)" KDIR="${KERNEL_SRC:?KERNEL_SRC is not set}"
+            test -s bs.ko
+            llvm-readelf -h bs.ko | grep -q "AArch64"
+            llvm-readelf -p .modinfo bs.ko > /tmp/modinfo.txt
+            grep -q "name=bs" /tmp/modinfo.txt
+            grep -q "license=GPL" /tmp/modinfo.txt
+            grep -q "vermagic=" /tmp/modinfo.txt
+            echo "--- undefined symbols (first 40) ---"
+            llvm-nm -u bs.ko | sed -n "1,40p"
+            mkdir -p out
+            output="bs-${KMI}.ko"
+            cp bs.ko "out/$output"
+            llvm-strip --strip-debug "out/$output"
+            test -s "out/$output"
+            cd out
+            sha256sum "$output" > "$output.sha256"
+          '
 
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
