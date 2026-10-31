@@ -21,6 +21,8 @@
 
 #include <linux/bitmap.h>
 #include <linux/build_bug.h>
+#include <linux/capability.h>
+#include <linux/cpu.h>
 #include <linux/cpumask.h>
 #include <linux/errno.h>
 #include <linux/file.h>
@@ -571,6 +573,7 @@ static int __nocfi bs_hwb_patch_words(uint32_t *dst, const uint32_t *src, int co
 {
     void *addrs[120];
     int i;
+    int ret;
 
     if (count <= 0 || count > (int)(sizeof(addrs) / sizeof(addrs[0])))
         return -EINVAL;
@@ -584,7 +587,12 @@ static int __nocfi bs_hwb_patch_words(uint32_t *dst, const uint32_t *src, int co
     for (i = 0; i < count; i++)
         addrs[i] = &dst[i];
 
-    return g_hwb_patch_text(addrs, (uint32_t *)src, count);
+    /* aarch64_insn_patch_text() reaches stop_machine_cpuslocked(), whose
+     * callers must hold cpus_read_lock (see kernel/kprobes.c arm_kprobe()). */
+    cpus_read_lock();
+    ret = g_hwb_patch_text(addrs, (uint32_t *)src, count);
+    cpus_read_unlock();
+    return ret;
 }
 
 #define BS_HOOK_STUB_WORDS 4
@@ -731,6 +739,19 @@ static void bs_hwb_trampoline_build(uint32_t *buf,
     memcpy(&buf[BS_TRAMP_WORK_SLOT_INDEX], &work_fn, sizeof(uint64_t));
 }
 
+/* The stub relocates the first four instructions into a trampoline; PC-relative
+ * encodings (b/bl, b.cond, cbz/cbnz, tbz/tbnz, adr/adrp, literal loads) would
+ * compute their target from the wrong PC there. */
+static bool bs_hwb_insn_is_pc_relative(uint32_t insn)
+{
+    return (insn & 0x7C000000u) == 0x14000000u ||   /* b / bl       */
+           (insn & 0xFF000010u) == 0x54000000u ||   /* b.cond       */
+           (insn & 0x7E000000u) == 0x34000000u ||   /* cbz / cbnz   */
+           (insn & 0x7E000000u) == 0x36000000u ||   /* tbz / tbnz   */
+           (insn & 0x1F000000u) == 0x10000000u ||   /* adr / adrp   */
+           (insn & 0x3B000000u) == 0x18000000u;     /* ldr/ldrsw/prfm literal */
+}
+
 static int bs_hwb_hook_install_one(struct bs_hwb_hook_entry *entry)
 {
     uint32_t tramp_code[BS_TRAMP_WORDS];
@@ -750,6 +771,22 @@ static int bs_hwb_hook_install_one(struct bs_hwb_hook_entry *entry)
     if (!entry->target_addr || !entry->work_fn)
         return -EINVAL;
 
+    {
+        static unsigned long hwb_stext, hwb_etext;
+
+        if (!hwb_stext) {
+            hwb_stext = (unsigned long)bs_hwb_lookup_symbol("_stext");
+            hwb_etext = (unsigned long)bs_hwb_lookup_symbol("_etext");
+        }
+        /* patch_map() BUG_ONs on unmapped addresses and the stub's literal
+         * load requires 8-byte alignment, so validate before touching text. */
+        if (!hwb_stext || hwb_etext <= hwb_stext ||
+            entry->target_addr < hwb_stext ||
+            entry->target_addr + BS_HOOK_STUB_BYTES > hwb_etext ||
+            !IS_ALIGNED(entry->target_addr, 8))
+            return -EINVAL;
+    }
+
     slot = bs_hwb_slot_alloc(&entry->trampoline);
     if (slot < 0)
         return slot;
@@ -758,6 +795,14 @@ static int bs_hwb_hook_install_one(struct bs_hwb_hook_entry *entry)
     for (i = 0; i < BS_HOOK_STUB_WORDS; i++)
         entry->saved_insn[i] = READ_ONCE(*(uint32_t *)(uintptr_t)
                                          (entry->target_addr + i * 4));
+    for (i = 0; i < BS_HOOK_STUB_WORDS; i++) {
+        if (bs_hwb_insn_is_pc_relative(entry->saved_insn[i])) {
+            bs_hwb_slot_free(slot);
+            entry->slot_index = -1;
+            entry->trampoline = NULL;
+            return -EOPNOTSUPP;
+        }
+    }
 
     return_addr = entry->target_addr + BS_HOOK_STUB_BYTES;
     bs_hwb_trampoline_build(tramp_code, entry->saved_insn,
@@ -786,17 +831,25 @@ out_slot:
     return ret;
 }
 
-static void bs_hwb_hook_remove_one(struct bs_hwb_hook_entry *entry)
+static int bs_hwb_hook_remove_one(struct bs_hwb_hook_entry *entry)
 {
     if (!entry->installed)
-        return;
+        return 0;
 
-    bs_hwb_patch_words((uint32_t *)(uintptr_t)entry->target_addr,
-                        entry->saved_insn, BS_HOOK_STUB_WORDS);
+    /* If the original instructions cannot be written back, the patched entry
+     * still branches into this module. Keep the hook marked installed so the
+     * caller does not release the module with a dangling branch target. */
+    if (bs_hwb_patch_words((uint32_t *)(uintptr_t)entry->target_addr,
+                           entry->saved_insn, BS_HOOK_STUB_WORDS)) {
+        pr_err("hwb: failed to restore %s, hook kept installed\n",
+               entry->target_sym ? entry->target_sym : "?");
+        return -EIO;
+    }
     bs_hwb_slot_free(entry->slot_index);
     entry->slot_index = -1;
     entry->trampoline = NULL;
     entry->installed = 0;
+    return 0;
 }
 
 static int bs_hwb_hook_install_many(struct bs_hwb_hook_entry *entries, int count)
@@ -815,12 +868,16 @@ static int bs_hwb_hook_install_many(struct bs_hwb_hook_entry *entries, int count
     return 0;
 }
 
-static void bs_hwb_hook_remove_many(struct bs_hwb_hook_entry *entries, int count)
+static int bs_hwb_hook_remove_many(struct bs_hwb_hook_entry *entries, int count)
 {
     int i;
+    int failures = 0;
 
-    for (i = count - 1; i >= 0; i--)
-        bs_hwb_hook_remove_one(&entries[i]);
+    for (i = count - 1; i >= 0; i--) {
+        if (bs_hwb_hook_remove_one(&entries[i]))
+            failures++;
+    }
+    return failures;
 }
 
 #define BS_HWB_HOOK(sym, fn)               \
@@ -1675,8 +1732,11 @@ static void bs_hwb_hooks_remove_locked(void)
     synchronize_rcu();
     wait_event(g_hwb_finish_return_wait,
                atomic_read(&g_hwb_finish_returns_inflight) == 0);
-    bs_hwb_hook_remove_many(g_hwb_exception_hooks,
-                             ARRAY_SIZE(g_hwb_exception_hooks));
+    if (bs_hwb_hook_remove_many(g_hwb_exception_hooks,
+                                ARRAY_SIZE(g_hwb_exception_hooks))) {
+        pr_err("hwb: exception hooks still patched, keeping state\n");
+        return;
+    }
     g_hwb.hooks_installed = 0;
 }
 
@@ -1792,6 +1852,11 @@ long bs_hwb_set(struct file *owner, void __user *arg)
 
     if (copy_from_user(&req, arg, sizeof(req)))
         return -EFAULT;
+    /* Cross-process instruction/data watchpoints expose another task's GPRs,
+     * stack pointer and SIMD registers: require the same capability ptrace
+     * itself requires. */
+    if (!capable(CAP_SYS_PTRACE))
+        return -EPERM;
     if (req.target_tid <= 0 || req.point_count == 0 ||
         req.point_count > BS_HWB_MAX_POINTS)
         return -EINVAL;
@@ -1866,6 +1931,8 @@ long bs_hwb_read(void __user *arg)
 
     if (copy_from_user(&req, arg, sizeof(req)))
         return -EFAULT;
+    if (!capable(CAP_SYS_PTRACE))
+        return -EPERM;
 
     req.out_size = sizeof(struct bs_hwb_snapshot);
     if (!req.buf || req.buf_size < req.out_size) {
@@ -1905,6 +1972,8 @@ out_unlock:
 
 long bs_hwb_clear(void)
 {
+    if (!capable(CAP_SYS_PTRACE))
+        return -EPERM;
     mutex_lock(&g_hwb_mutex);
     bs_hwb_stop_locked();
     if (g_hwb.snapshots[0])
