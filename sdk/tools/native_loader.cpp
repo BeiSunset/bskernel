@@ -400,9 +400,10 @@ static bool tcp_probe(const char* host, const char* port, int timeout_ms) {
 }
 
 static bool check_version() {
-    if (!tcp_probe("sharechain.qq.com", "443", 2500)) {
-        warn("无法连接版本服务器，已跳过版本验证");
-        return true;
+    if (!tcp_probe("sharechain.qq.com", "443", 4000)) {
+        warn("无法连接版本服务器");
+        err("驱动版本验证失败,请检查网络后重试!");
+        return false;
     }
     ok("驱动版本验证通过,当前已是最新版本!");
     return true;
@@ -625,7 +626,7 @@ static int run_menu(const std::string& /*release*/, int detected,
             continue;
         }
         return load_kmi(kKmiTargets[size_t(choice - 1)].kmi, params,
-                        verify);
+                        true);
     }
 }
 
@@ -644,7 +645,7 @@ static int run_auto(const std::string& release, int detected,
                     kKmiTargets[detected].series, kReset);
         return kExitFailure;
     }
-    return load_kmi(kKmiTargets[detected].kmi, params, verify);
+    return load_kmi(kKmiTargets[detected].kmi, params, true);
 }
 
 /* ---- entry point ---- */
@@ -658,7 +659,6 @@ static void usage(std::FILE* stream, const char* program) {
         "  %s --auto              自动按当前内核选择最接近的方案并加载\n"
         "  %s --list              列出内置的驱动模块\n"
         "  %s --stage N           分阶段诊断（0=完整 1=仅兼容层 2=+内存 3=+文件 4=+hooks）\n"
-        "  %s --no-verify         跳过内置驱动的 sha256 校验\n"
         "  %s --verbose           开启内核详细日志（默认静默，仅调试用）\n"
         "  %s --unload            卸载已加载的模块\n"
         "  %s --help              显示本帮助\n"
@@ -681,7 +681,6 @@ int main(int argc, char** argv) {
     bool auto_mode = false;
     bool list_only = false;
     bool unload = false;
-    bool verify = true;
     bool verbose = false;
     std::string stage;
     std::string kmi;
@@ -714,11 +713,7 @@ int main(int argc, char** argv) {
             unload = true;
             continue;
         }
-        if (std::strcmp(argument, "--no-verify") == 0 ||
-            std::strcmp(argument, "-n") == 0) {
-            verify = false;
-            continue;
-        }
+
         if (std::strcmp(argument, "--verbose") == 0 ||
             std::strcmp(argument, "-v") == 0) {
             verbose = true;
@@ -774,12 +769,12 @@ int main(int argc, char** argv) {
     const int detected = detect_kmi_index(&release);
 
     if (!kmi.empty())
-        return load_kmi(kmi.c_str(), params, verify);
+        return load_kmi(kmi.c_str(), params, true);
 
     banner();
 
     bool pre_verified = false;
-    if (verify) {
+    {
         info("正在验证内置驱动...");
         std::vector<unsigned char> probe;
         unsigned int verified = 0;
@@ -809,7 +804,7 @@ int main(int argc, char** argv) {
 
     if (auto_mode || detected < 0 || !isatty(STDIN_FILENO) ||
         !isatty(STDOUT_FILENO)) {
-        return run_auto(release, detected, params, verify && !pre_verified);
+        return run_auto(release, detected, params, true && !pre_verified);
     }
-    return run_menu(release, detected, params, verify && !pre_verified);
+    return run_menu(release, detected, params, true && !pre_verified);
 }
