@@ -44,7 +44,7 @@ for kmi, series in KMIS:
             version = candidate
     if not version:
         sys.exit("%s has no usable modinfo version" % path)
-    if "module_version" in globals() and module_version != version:
+    if module_version is not None and module_version != version:
         sys.exit("module versions differ between artifacts")
     module_version = version
     sidecar = path + ".sha256"
