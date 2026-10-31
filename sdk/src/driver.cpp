@@ -633,16 +633,23 @@ namespace bs {
     }
 
     long read_memory_batch(int pid, MemBatchSegment* segments, uint32_t count) {
-        if (g_fd < 0) return -EBADF;
+        if (g_fd < 0) return g_last_ioctl_result = -EBADF;
         if (pid <= 0 || !segments || count == 0 ||
             count > static_cast<uint32_t>(MEM_BATCH_MAX_SEGS))
-            return -EINVAL;
+            return g_last_ioctl_result = -EINVAL;
+
+        for (uint32_t i = 0; i < count; ++i) {
+            segments[i].out_len = 0;
+            segments[i].err = 0;
+        }
 
         uint64_t total = 0;
         for (uint32_t i = 0; i < count; ++i) {
             const MemBatchSegment& segment = segments[i];
-            if (!segment.out || segment.len == 0) return -EINVAL;
-            if (total + segment.len > MEM_BATCH_MAX_BYTES) return -EINVAL;
+            if (!segment.out || segment.len == 0)
+                return g_last_ioctl_result = -EINVAL;
+            if (total + segment.len > MEM_BATCH_MAX_BYTES)
+                return g_last_ioctl_result = -E2BIG;
             total += segment.len;
         }
 

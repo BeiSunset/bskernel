@@ -1061,6 +1061,23 @@ static int create_linearmap(void)
     return retval;
 }
 
+/* pfn_valid() only proves the PFN has a struct page; arm64 map_mem() skips
+ * MEMBLOCK_NOMAP, so a valid PFN can still be absent from the linear map.
+ * The linearmap table describes exactly the regions the kernel maps (it skips
+ * NOMAP while building), and it is immutable between mem_core_init() and
+ * mem_core_exit(), which the control fd's module reference keeps apart. */
+static bool ____pa_is_mapped_ram(unsigned long pa)
+{
+    unsigned long i;
+
+    for (i = 0; i < __linearmap_info_cnt; i++) {
+        if (pa >= __linearmap_info_arr[i].phys &&
+            pa < __linearmap_info_arr[i].phys + __linearmap_info_arr[i].size)
+            return true;
+    }
+    return false;
+}
+
 static unsigned long ____phys_to_virt_nc(unsigned long pa)
 {
     down_read(&__linearmap_rwlock);
@@ -1231,7 +1248,8 @@ static ssize_t nc_memrw(struct mm_struct *mm, unsigned long addr, char __user *b
          * read them there and skip the per-granule NC rwsem + memblock scan.
          * Anything else -- NC, device, or an unknown attribute -- stays on
          * the NC path. */
-        if (attr == PTE_ATTRINDX(MT_NORMAL) && pfn_valid(PFN_DOWN(phys)))
+        if (attr == PTE_ATTRINDX(MT_NORMAL) &&
+            ____pa_is_mapped_ram(phys) && pfn_valid(PFN_DOWN(phys)))
             virt = (unsigned long)phys_to_virt(phys);
         else
             virt = ____phys_to_virt_nc(phys);
@@ -1285,7 +1303,7 @@ static ssize_t nc_memrw_cache(struct mm_struct *mm, unsigned long addr, char __u
 
         this_len = min(this_len, count);
         cached = attr == PTE_ATTRINDX(MT_NORMAL) &&
-                 pfn_valid(PFN_DOWN(phys));
+                 ____pa_is_mapped_ram(phys) && pfn_valid(PFN_DOWN(phys));
         if (cached)
             virt = (unsigned long)phys_to_virt(phys);
         else
@@ -1351,6 +1369,28 @@ static ssize_t nc_memread_kernel(struct mm_struct *mm, unsigned long addr, char 
     return copied;
 }
 
+/* Fault in every page intersected by [buf, buf + len): one zero byte per page,
+ * the same trick fault_in_pages_writeable() uses (the range was access_ok()ed
+ * already). Stepping by PAGE_SIZE from an unaligned base would miss the last
+ * page the range crosses, which is where a pending-writer rwsem deadlock would
+ * then happen. */
+static int prefault_user_write(char __user *buf, size_t len)
+{
+    unsigned long start = (unsigned long)buf;
+    unsigned long end = start + len;
+    unsigned long p;
+
+    if (!len)
+        return 0;
+    if (put_user((char)0, buf))
+        return -EFAULT;
+    for (p = (start + PAGE_SIZE) & PAGE_MASK; p < end; p += PAGE_SIZE) {
+        if (put_user((char)0, (char __user *)p))
+            return -EFAULT;
+    }
+    return 0;
+}
+
 static ssize_t access_remote_vm_nc(pid_t vpid, unsigned long target, char __user *buffer,
                                    size_t count, int write)
 {
@@ -1376,15 +1416,9 @@ static ssize_t access_remote_vm_nc(pid_t vpid, unsigned long target, char __user
     /* Pre-touch the destination pages before taking mmap_lock: a page fault
      * inside __copy_to_user() would take the same mmap_lock again when the
      * target is the caller mm and can deadlock against a pending writer. */
-    {
-        size_t tmp;
-
-        for (tmp = 0; tmp < count; tmp += PAGE_SIZE) {
-            if (put_user((char)0, (char __user *)buffer + tmp)) {
-                result = -EFAULT;
-                goto out;
-            }
-        }
+    if (prefault_user_write(buffer, count)) {
+        result = -EFAULT;
+        goto out;
     }
 
     mmap_read_lock(mm);
@@ -1420,15 +1454,9 @@ static ssize_t access_remote_vm_nc_cache(pid_t vpid, unsigned long target, char 
     }
 
     /* See access_remote_vm_nc(): pre-touch the destination before the lock. */
-    {
-        size_t tmp;
-
-        for (tmp = 0; tmp < count; tmp += PAGE_SIZE) {
-            if (put_user((char)0, (char __user *)buffer + tmp)) {
-                result = -EFAULT;
-                goto out;
-            }
-        }
+    if (prefault_user_write(buffer, count)) {
+        result = -EFAULT;
+        goto out;
     }
 
     mmap_read_lock(mm);
@@ -1863,17 +1891,10 @@ long mem_read_batch(void __user *arg)
      * again and can deadlock against a pending writer. An unusable buffer is
      * reported for that segment only; the remaining segments still proceed. */
     for (i = 0; i < req.count; i++) {
-        size_t off;
-
-        if (!access_ok((char __user *)segs[i].buf, segs[i].len)) {
+        if (!access_ok((char __user *)segs[i].buf, segs[i].len) ||
+            prefault_user_write((char __user *)segs[i].buf, segs[i].len)) {
             segs[i].err = -EFAULT;
             continue;
-        }
-        for (off = 0; off < segs[i].len; off += PAGE_SIZE) {
-            if (put_user((char)0, (char __user *)segs[i].buf + off)) {
-                segs[i].err = -EFAULT;
-                break;
-            }
         }
     }
 

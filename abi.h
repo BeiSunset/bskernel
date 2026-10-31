@@ -265,7 +265,7 @@ struct mem_batch_seg {
     uint64_t addr;      /* in: target VA */
     uint64_t buf;       /* in: caller destination */
     uint32_t len;       /* in: bytes to read */
-    uint32_t out_len;   /* out: bytes read (0 on error) */
+    uint32_t out_len;   /* out: bytes copied; may be >0 together with err == -EFAULT (short read) */
     int32_t  err;       /* out: 0 or negative errno for this segment */
     uint32_t reserved;  /* in: must be 0 */
 };
@@ -277,7 +277,7 @@ struct mem_batch_req {
     int32_t  pid;       /* in */
     uint32_t count;     /* in: 1..MEM_BATCH_MAX_SEGS */
     uint64_t segs;      /* in: struct mem_batch_seg array (in/out) */
-    uint64_t total;     /* out: sum(out_len) */
+    uint64_t total;     /* out: sum(out_len), partial segments included */
     uint32_t flags;     /* in: must be 0 */
     uint32_t reserved;  /* in: must be 0 */
 };
