@@ -661,6 +661,21 @@ struct udp_cap_read_req {
     uint32_t reserved;
 };
 
+/* Buffer-size-aware batch read: up to UDP_CAP_READ_MAX packets in one call.
+ * Kept separate from udp_cap_read_req because adding buf_size would change the
+ * _IOWR encoding of the legacy command. */
+struct udp_cap_read_v2_req {
+    uint64_t buf;
+    uint32_t max_count;
+    uint32_t buf_size;
+    uint32_t out_count;
+    uint32_t reserved;
+    uint64_t overflow;
+    uint64_t captured;
+};
+
+#define UDP_IOC_READ_V2 _IOWR('D', 38, struct udp_cap_read_v2_req)
+
 struct touch_status {
     int installed;                    /* 1 = touch_read_proxy 已装 */
     int patched_uid;                  /* 装 proxy 时的 current_uid */

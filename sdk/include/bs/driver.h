@@ -72,6 +72,12 @@ namespace bs {
      * No legacy caller-fd or userspace-system-call fallback. */
     long query_kgsl(bs_kgsl_query_req& request);
 
+    /* Direct KGSL syncsource IDR peek (legacy D,23 entry; the same feature is
+     * also reachable through query_kgsl() with BS_KGSL_QUERY_SYNCSOURCE_PEEK).
+     * Return 0 on completion; reserved[0] carries the fail stage on failure. */
+    long kgsl_syncsource_peek(int kgsl_fd, uint32_t min_id,
+                              bs_kgsl_syncsource_peek_req& out);
+
     bool hwb_info(bs_hwb_info_req& out);
     bool hwb_slots(int targetTid, bs_hwb_slots_req& out);
     bool hwb_set(int targetTid, const bs_hwb_point_req* points, size_t pointCount);
@@ -85,6 +91,12 @@ namespace bs {
                       uint16_t maxPayload = UDP_CAP_MAX_PAYLOAD);
     bool udp_cap_read(udp_cap_packet* out, uint32_t maxCount, uint32_t& outCount,
                       uint64_t* overflow = nullptr, uint64_t* captured = nullptr);
+    /* Batch read up to UDP_CAP_READ_MAX packets in one ioctl (buffer-size-aware
+     * UDP_IOC_READ_V2). outCapacity is the number of packets that fit in
+     * `out`; returns the number drained in outCount. */
+    bool udp_cap_read_v2(udp_cap_packet* out, uint32_t outCapacity,
+                         uint32_t& outCount, uint64_t* overflow = nullptr,
+                         uint64_t* captured = nullptr);
     bool udp_cap_stop();
 
     /* Bounded /data/adb file proxy for confined SF workers. */

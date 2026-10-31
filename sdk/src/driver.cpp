@@ -515,10 +515,53 @@ namespace bs {
         return true;
     }
 
+    bool udp_cap_read_v2(udp_cap_packet* out, uint32_t outCapacity,
+                         uint32_t& outCount, uint64_t* overflow,
+                         uint64_t* captured) {
+        outCount = 0;
+        if (!out || !outCapacity || outCapacity > UDP_CAP_READ_MAX)
+            return false;
+        udp_cap_read_v2_req req{};
+        req.buf = reinterpret_cast<uint64_t>(out);
+        req.max_count = outCapacity;
+        req.buf_size = outCapacity * uint32_t(sizeof(*out));
+        g_last_ioctl_result =
+            call_ioctl(g_fd, UDP_IOC_READ_V2, (long)&req);
+        if (g_last_ioctl_result != 0 || req.reserved != 0)
+            return false;
+        if (req.out_count > outCapacity)
+            return false;
+        outCount = req.out_count;
+        if (overflow)
+            *overflow = req.overflow;
+        if (captured)
+            *captured = req.captured;
+        return true;
+    }
+
     bool udp_cap_stop() {
         g_last_ioctl_result =
             call_ioctl(g_fd, UDP_IOC_STOP, 0);
         return g_last_ioctl_result == 0;
+    }
+
+    long kgsl_syncsource_peek(int kgsl_fd, uint32_t min_id,
+                              bs_kgsl_syncsource_peek_req& out) {
+        out.kgsl_fd = kgsl_fd;
+        out.min_id = min_id;
+        out.flags = 0;
+        out.abi_version = BS_KGSL_SYNCSOURCE_PEEK_ABI_VERSION;
+        out.out_id = 0;
+        out.out_backend = 0;
+        out.reserved[0] = 0;
+        out.reserved[1] = 0;
+        if (g_fd < 0)
+            return -EBADF;
+        if (kgsl_fd < 0 || !min_id)
+            return -EINVAL;
+        g_last_ioctl_result =
+            call_ioctl(g_fd, BS_IOCTL_KGSL_SYNCSOURCE_PEEK, (long)&out);
+        return g_last_ioctl_result;
     }
 
     long last_ioctl_result() {
