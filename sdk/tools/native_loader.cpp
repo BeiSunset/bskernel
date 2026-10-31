@@ -885,13 +885,16 @@ static int load_module_bytes(const unsigned char* data, size_t size,
     *out_stage = kLoadWrite;
     if (!write_all(fd, data, size)) {
         error = errno != 0 ? errno : EIO;
-    } else if (*out_stage = kLoadSeek, ::lseek(fd, 0, SEEK_SET) < 0) {
-        error = errno;
     } else {
-        *out_stage = kLoadFinit;
-        if (syscall(__NR_finit_module, static_cast<long>(fd),
-                    params.c_str(), 0L) != 0)
+        *out_stage = kLoadSeek;
+        if (::lseek(fd, 0, SEEK_SET) < 0) {
             error = errno;
+        } else {
+            *out_stage = kLoadFinit;
+            if (syscall(__NR_finit_module, static_cast<long>(fd),
+                        params.c_str(), 0L) != 0)
+                error = errno;
+        }
     }
 
     (void)::close(fd);
