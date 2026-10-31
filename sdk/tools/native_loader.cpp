@@ -8,6 +8,7 @@
  * shell or insmod is involved. The menu, banner and status flow mirror the old
  * shell loader.
  */
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -374,6 +376,51 @@ static long long monotonic_ms() {
            static_cast<long long>(now.tv_nsec) / 1000000;
 }
 
+struct ResolveJob {
+    const char* host;
+    const char* port;
+    struct addrinfo* result;
+    std::atomic<int> done;
+};
+
+static void* resolve_thread(void* argument) {
+    ResolveJob* job = static_cast<ResolveJob*>(argument);
+    struct addrinfo hints;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    job->result = nullptr;
+    if (getaddrinfo(job->host, job->port, &hints, &job->result) != 0)
+        job->result = nullptr;
+    job->done.store(1);
+    return nullptr;
+}
+
+/* getaddrinfo() has no timeout of its own; a stuck resolver would otherwise
+ * freeze startup. The job is leaked when the resolver misses the deadline
+ * because the thread cannot be cancelled; the process is short-lived. */
+static struct addrinfo* resolve_with_timeout(const char* host,
+                                             const char* port,
+                                             int timeout_ms) {
+    ResolveJob* job = new ResolveJob{host, port, nullptr};
+    if (job == nullptr)
+        return nullptr;
+    pthread_t thread;
+    if (pthread_create(&thread, nullptr, resolve_thread, job) != 0) {
+        delete job;
+        return nullptr;
+    }
+    pthread_detach(thread);
+    const long long deadline = monotonic_ms() + timeout_ms;
+    while (!job->done.load() && monotonic_ms() < deadline)
+        usleep(5000);
+    if (!job->done.load())
+        return nullptr;
+    struct addrinfo* result = job->result;
+    delete job;
+    return result;
+}
+
 /* Non-blocking connect with a deadline: a dead network must not hang the UI. */
 static int tcp_connect_timeout(const char* host, const char* port,
                                int timeout_ms) {
@@ -381,8 +428,8 @@ static int tcp_connect_timeout(const char* host, const char* port,
     std::memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    struct addrinfo* addresses = nullptr;
-    if (getaddrinfo(host, port, &hints, &addresses) != 0)
+    struct addrinfo* addresses = resolve_with_timeout(host, port, 3000);
+    if (addresses == nullptr)
         return -1;
 
     int connected_fd = -1;
@@ -749,6 +796,23 @@ static bool is_module_loaded() {
     return found;
 }
 
+/* /sys/module/bs/version is created from MODULE_VERSION; a foreign module that
+ * happens to be called "bs" will not carry our version string. */
+static bool loaded_module_is_ours() {
+    std::FILE* file = std::fopen("/sys/module/bs/version", "r");
+    if (!file)
+        return false;
+    char line[64] = {0};
+    const bool read_ok = std::fgets(line, sizeof(line), file) != nullptr;
+    std::fclose(file);
+    if (!read_ok)
+        return false;
+    std::string value(line);
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
+        value.pop_back();
+    return value == kVersionFull;
+}
+
 static int detect_kmi_index(std::string* release) {
     struct utsname info;
     if (uname(&info) != 0) {
@@ -829,6 +893,10 @@ static int load_kmi(const char* kmi, const std::string& params,
         return kExitFailure;
     }
     if (is_module_loaded()) {
+        if (!loaded_module_is_ours()) {
+            err("已存在同名但非本驱动的模块（/sys/module/bs 版本不符）");
+            return kExitFailure;
+        }
         ok("内核模块加载成功!");
         return kExitOk;
     }
@@ -849,9 +917,17 @@ static int load_kmi(const char* kmi, const std::string& params,
         std::printf("%s[x] 内核模块加载失败!%s %s (%d)\n", kRed, kReset,
                     errno_name(error), error);
         if (error == EEXIST) {
-            ok("内核模块加载成功!");
-            return kExitOk;
+            if (loaded_module_is_ours()) {
+                ok("内核模块加载成功!");
+                return kExitOk;
+            }
+            err("已存在同名但非本驱动的模块（/sys/module/bs 版本不符）");
+            return kExitFailure;
         }
+        return kExitFailure;
+    }
+    if (!is_module_loaded() || !loaded_module_is_ours()) {
+        err("内核模块加载后校验失败!");
         return kExitFailure;
     }
     ok("内核模块加载成功!");
