@@ -59,7 +59,7 @@ if(BSKERNEL_BUILD_NATIVE_LOADER)
         target_include_directories(BSLoaderDriver PRIVATE "${BSKERNEL_EMBEDDED_HEADER}")
     endif()
     target_link_libraries(BSLoaderDriver PRIVATE z)
-    install(TARGETS BSLoADERDriver RUNTIME DESTINATION bin)
+    install(TARGETS BSLoaderDriver RUNTIME DESTINATION bin)
 endif()
 
 include(CMakePackageConfigHelpers)

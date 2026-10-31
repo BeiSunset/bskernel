@@ -158,9 +158,9 @@ jobs:
             -DBSKERNEL_BUILD_NATIVE_LOADER=ON \
             -DBSKERNEL_EMBEDDED_HEADER="$PWD/sdk/tools" \
             -DBSKERNEL_BUILD_TOOLS=OFF -DBSKERNEL_BUILD_EXAMPLE=OFF
-          cmake --build build/native --target BSLoADERDriver --parallel "$(nproc)"
+          cmake --build build/native --target BSLoaderDriver --parallel "$(nproc)"
           mkdir -p out
-          install -m 0755 build/native/BSLoADERDriver out/BSLoaderDriver
+          install -m 0755 build/native/BSLoaderDriver out/BSLoaderDriver
           "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/BSLoaderDriver
           file out/BSLoaderDriver || true
           sha256sum out/BSLoaderDriver > out/BSLoaderDriver.sha256
