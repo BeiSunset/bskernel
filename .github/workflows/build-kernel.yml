@@ -62,12 +62,19 @@ jobs:
             test -s bs.ko
             llvm-readelf -h bs.ko | grep -q "AArch64"
             if llvm-readelf -S bs.ko | grep -q "\.percpu"; then
-              echo "::error::bs.ko contains a per-CPU section. Some vendor kernels"
-              echo "::error::(e.g. OnePlus) reject such modules before init with"
-              echo "::error::\"Could not allocate N bytes percpu data\" (-ENOMEM)."
-              echo "::error::Use kvzalloc + num_possible_cpus() CPU-indexed arrays;"
-              echo "::error::see PORTING.md."
-              exit 1
+              # Allow only kernel-generated allocation-tag counters (present when
+              # CONFIG_MEM_ALLOC_PROFILING is on, e.g. the 6.12 KMI) and the
+              # zero-length $d.* placeholders; any other symbol is user per-CPU
+              # data, which vendor kernels (OnePlus) reject before init:
+              #   "bs: Could not allocate N bytes percpu data" -> -ENOMEM.
+              percpu_idx=$(llvm-readelf -S --wide bs.ko | sed -n "s/^ *\[ *\\([0-9][0-9]*\\)\\] \\.data\\.\\.percpu .*/\\1/p" | head -n1)
+              bad_percpu=$(llvm-readelf -s --wide bs.ko | awk -v idx="$percpu_idx" "\$7==idx {print \$8}" | grep -vE "(_alloc_tag_cntr$|^\\\$d\\.|^$)" || true)
+              if [ -n "$bad_percpu" ]; then
+                echo "::error::bs.ko has user per-CPU data (vendor kernels reject it before init):"
+                echo "$bad_percpu"
+                echo "::error::Use kvzalloc + num_possible_cpus() CPU-indexed arrays; see PORTING.md."
+                exit 1
+              fi
             fi
             llvm-readelf -p .modinfo bs.ko > /tmp/modinfo.txt
             grep -q "name=bs" /tmp/modinfo.txt

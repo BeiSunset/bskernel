@@ -18,9 +18,12 @@
 - 替代做法：`kvzalloc(sizeof(*p) * num_possible_cpus(), GFP_KERNEL)`，
   用 `smp_processor_id()` 索引；访问点必须保证 CPU 不迁移
   （持 spinlock / 关中断，或处于 kprobe、异常上下文）。
-- 自检：构建产物不应包含 `.percpu` 段：
-  `llvm-readelf -S bs.ko | grep percpu` 应无输出（CI 已强制检查）。
-- 可用 `llvm-readelf -S bs.ko | grep -E '\.percpu'` 复查任意历史产物。
+- 自检：构建产物不应包含**我们自己的** per-CPU 数据。CI 会检查 `.percpu` 段里的符号：
+  - 允许 `*_alloc_tag_cntr`（6.12 内核 `CONFIG_MEM_ALLOC_PROFILING` 自动生成的分配统计计数器）
+    和 `$d.*` 零长占位符；
+  - 出现其它任何符号即判定为"代码里写了 per-CPU 变量"，直接构建失败。
+- 手工复查：`llvm-readelf -S bs.ko | grep -E '\.percpu'`；
+  再用 `llvm-readelf -s bs.ko` 看该段内的符号名。
 
 ### 2. 日志策略
 
