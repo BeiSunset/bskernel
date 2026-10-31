@@ -59,8 +59,8 @@
 #endif
 
 static constexpr long kO_NONBLOCK = 0x800;
-static constexpr const char* kVersion = "1.0";
-static constexpr const char* kVersionFull = "1.0.0";
+static constexpr const char* kVersion = "1.0.5";
+static constexpr const char* kVersionFull = "1.0.5";
 static constexpr const char* kTgUrl = "https://t.me/BAIFRE";
 static constexpr unsigned int kMaxRawModuleBytes = 256u * 1024u * 1024u;
 
@@ -423,19 +423,22 @@ static int tcp_connect_timeout(const char* host, const char* port,
 }
 
 /* Trust anchors from the platform store; silently skip unreadable entries. */
-static void load_system_ca(mbedtls_x509_crt* chain) {
+static unsigned int load_system_ca(mbedtls_x509_crt* chain) {
+    unsigned int loaded = 0;
     DIR* dir = opendir("/system/etc/security/cacerts");
     if (!dir)
-        return;
+        return 0;
     while (struct dirent* entry = readdir(dir)) {
         if (entry->d_name[0] == '.')
             continue;
         char path[512];
         std::snprintf(path, sizeof(path), "/system/etc/security/cacerts/%s",
                       entry->d_name);
-        (void)mbedtls_x509_crt_parse_file(chain, path);
+        if (mbedtls_x509_crt_parse_file(chain, path) == 0)
+            ++loaded;
     }
     closedir(dir);
+    return loaded;
 }
 
 /* Returns the page body, or false when the request could not be completed. */
@@ -462,9 +465,10 @@ static bool https_get(const char* host, const char* path, std::string* body) {
                               reinterpret_cast<const unsigned char*>(personal),
                               std::strlen(personal)) != 0)
         goto out;
-    load_system_ca(&ca);
-    if (ca.next == nullptr)
+    if (load_system_ca(&ca) == 0 || ca.version == 0) {
+        err("驱动版本验证失败,无法读取系统证书库!");
         goto out;
+    }
 
     if (mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
                                     MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -566,11 +570,20 @@ static bool https_get(const char* host, const char* path, std::string* body) {
         }
         if (response.empty())
             goto out;
-        if (response.find("\r\n\r\n") == std::string::npos)
+        if (response.compare(0, 12, "HTTP/1.1 200") != 0)
             goto out;
-        /* Keep the raw response: html_content may sit in chunked data, and
-         * searching the whole buffer is robust against header/body framing. */
-        *body = response;
+        const size_t header_end = response.find("\r\n\r\n");
+        if (header_end == std::string::npos)
+            goto out;
+        if (response.find("Transfer-Encoding: chunked") !=
+            std::string::npos) {
+            std::string decoded;
+            if (!dechunk(response.substr(header_end + 4), &decoded))
+                goto out;
+            *body = decoded;
+        } else {
+            *body = response.substr(header_end + 4);
+        }
         ok_result = true;
     }
 
@@ -584,6 +597,27 @@ out:
     mbedtls_ctr_drbg_free(&drbg);
     mbedtls_entropy_free(&entropy);
     return ok_result;
+}
+
+/* Decode a Transfer-Encoding: chunked body; returns false on malformed data. */
+static bool dechunk(const std::string& in, std::string* out) {
+    size_t pos = 0;
+    out->clear();
+    while (pos < in.size()) {
+        const size_t eol = in.find("\r\n", pos);
+        if (eol == std::string::npos)
+            return false;
+        const unsigned long length =
+            std::strtoul(in.substr(pos, eol - pos).c_str(), nullptr, 16);
+        pos = eol + 2;
+        if (length == 0)
+            return true;
+        if (pos + length > in.size())
+            return false;
+        out->append(in, pos, length);
+        pos += length + 2;
+    }
+    return true;
 }
 
 static bool extract_html_content(const std::string& page, std::string* out) {
@@ -723,8 +757,10 @@ static bool write_all(int fd, const unsigned char* data, size_t size) {
                 continue;
             return false;
         }
-        if (result == 0)
+        if (result == 0) {
+            errno = EIO;
             return false;
+        }
         written += size_t(result);
     }
     return true;
@@ -739,6 +775,7 @@ static int load_module_bytes(const unsigned char* data, size_t size,
     const int fd = static_cast<int>(raw_fd);
 
     int error = 0;
+    errno = 0;
     if (!write_all(fd, data, size)) {
         error = errno != 0 ? errno : EIO;
     } else if (::lseek(fd, 0, SEEK_SET) < 0) {
@@ -780,8 +817,10 @@ static int load_kmi(const char* kmi, const std::string& params,
     if (error != 0) {
         std::printf("%s[x] 内核模块加载失败!%s %s (%d)\n", kRed, kReset,
                     errno_name(error), error);
-        if (error == EEXIST)
+        if (error == EEXIST) {
             ok("内核模块加载成功!");
+            return kExitOk;
+        }
         return kExitFailure;
     }
     ok("内核模块加载成功!");
@@ -1011,12 +1050,9 @@ int main(int argc, char** argv) {
     std::string release;
     const int detected = detect_kmi_index(&release);
 
-    if (!kmi.empty())
-        return load_kmi(kmi.c_str(), params, true);
+    if (!g_quiet && isatty(STDOUT_FILENO))
+        banner();
 
-    banner();
-
-    bool pre_verified = false;
     {
         info("正在验证内置驱动...");
         std::vector<unsigned char> probe;
@@ -1041,9 +1077,11 @@ int main(int argc, char** argv) {
     std::printf("\n%s[-] 你的当前内核版本是：%s%s\n\n", kTeal, kReset,
                 release.empty() ? "unknown" : release.c_str());
 
+    if (!kmi.empty())
+        return load_kmi(kmi.c_str(), params, true);
     if (auto_mode || detected < 0 || !isatty(STDIN_FILENO) ||
         !isatty(STDOUT_FILENO)) {
-        return run_auto(release, detected, params, true && !pre_verified);
+        return run_auto(release, detected, params, true);
     }
-    return run_menu(release, detected, params, true && !pre_verified);
+    return run_menu(release, detected, params, true);
 }

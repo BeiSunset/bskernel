@@ -175,7 +175,7 @@ jobs:
           install -m 0755 build/native/BSLoaderDriver out/BSLoaderDriver.sh
           "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/BSLoaderDriver.sh
           file out/BSLoaderDriver.sh || true
-          (cd out && sha256sum BSLoADERDriver.sh > BSLoADERDriver.sh.sha256)
+          (cd out && sha256sum BSLoaderDriver.sh > BSLoaderDriver.sh.sha256)
 
       - name: Upload native loader
         uses: actions/upload-artifact@v4
