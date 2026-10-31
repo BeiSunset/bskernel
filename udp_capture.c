@@ -45,7 +45,11 @@ static u32 g_udp_count;
 static struct udp_cap_packet *g_udp_pool;
 static struct udp_cap_packet *g_udp_ring[UDP_CAP_RING];
 static struct udp_cap_packet *g_udp_read_slots[UDP_CAP_READ_MAX];
-static DEFINE_PER_CPU(struct udp_cap_packet *, g_udp_scratch);
+/* Not DEFINE_PER_CPU on purpose: some vendor kernels reject the whole module
+ * load with "Could not allocate N bytes percpu data" (-ENOMEM) before init,
+ * so keep a plain CPU-indexed pointer array instead (allocated in
+ * udp_ensure_ring()). */
+static struct udp_cap_packet **g_udp_scratch;
 static struct udp_cap_packet *g_udp_stage;
 static DEFINE_MUTEX(g_udp_read_lock);
 
@@ -142,8 +146,14 @@ static int udp_rcv_one_pre(struct kprobe *p, struct pt_regs *regs)
     /* Kprobe handlers cannot migrate and recursive probes are suppressed.
      * Thus this CPU's scratch packet is private until it is published.
      * Configuration changes unregister/drain the probe before updating it. */
-    scratch = this_cpu_ptr(&g_udp_scratch);
+    if (!g_udp_scratch)
+        return 0;
+    /* Kprobe handlers run with interrupts disabled and cannot migrate, so the
+     * CPU index stays stable here. */
+    scratch = &g_udp_scratch[smp_processor_id()];
     slot = *scratch;
+    if (!slot)
+        return 0;
     if (udp_fill_packet(skb, slot))
         return 0;
     slot->sock_uid = g_udp_uid;
@@ -217,6 +227,13 @@ static int udp_ensure_ring(void)
         vfree(pool);
         return -ENOMEM;
     }
+    g_udp_scratch = kvzalloc(sizeof(*g_udp_scratch) * num_possible_cpus(),
+                             GFP_KERNEL);
+    if (!g_udp_scratch) {
+        vfree(stage);
+        vfree(pool);
+        return -ENOMEM;
+    }
     /* Caller holds init/read mutexes, and the probe is not registered. */
     for (i = 0; i < UDP_CAP_RING; i++)
         g_udp_ring[i] = &pool[i];
@@ -224,7 +241,7 @@ static int udp_ensure_ring(void)
         g_udp_read_slots[i] = &pool[UDP_CAP_RING + i];
     i = UDP_CAP_RING + UDP_CAP_READ_MAX;
     for_each_possible_cpu(cpu)
-        per_cpu(g_udp_scratch, cpu) = &pool[i++];
+        g_udp_scratch[cpu] = &pool[i++];
     g_udp_stage = stage;
     g_udp_pool = pool;
     return 0;
@@ -422,7 +439,9 @@ void udp_capture_exit(void)
     mutex_lock(&g_udp_read_lock);
     vfree(g_udp_pool);
     vfree(g_udp_stage);
+    kvfree(g_udp_scratch);
     g_udp_pool = NULL;
     g_udp_stage = NULL;
+    g_udp_scratch = NULL;
     mutex_unlock(&g_udp_read_lock);
 }
