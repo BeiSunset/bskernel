@@ -88,6 +88,7 @@ struct bs_hwb_session {
     int target_tid;
     struct task_struct *target;   /* pinned at SET time: TIDs are recycled */
     uint64_t generation;
+    uint64_t sav_gen;             /* generation the per-CPU backups belong to */
     struct file *owner;
     uint32_t point_count;
     uint32_t used_brps;
@@ -1400,23 +1401,33 @@ static void bs_hwb_save_slots_current_cpu(void)
 {
     struct bs_hwb_sav_cpu *sav = bs_hwb_sav_current();
     uint32_t i;
-    u32 mask = 0;
 
-    if (!sav || sav->gen == g_hwb.generation)
+    if (!sav)
         return;
+    if (sav->gen != g_hwb.generation) {
+        /* New session: drop the previous session's stale backups. */
+        sav->mask = 0;
+        sav->gen = g_hwb.generation;
+    }
 
+    /* Save per slot: a hit restores and consumes a mask bit, so the next arm
+     * of the same slot must save the kernel's value again. Skipping the whole
+     * CPU after the first arm would make later disarms write 0 over the
+     * ptrace/perf breakpoints this mechanism exists to preserve. */
     for (i = 0; i < g_hwb.used_brps && i < BS_HWB_MAX_HW_SLOTS; i++) {
+        if (sav->mask & (1U << i))
+            continue;
         sav->brp_a[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_BVR, (int)i);
         sav->brp_c[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_BCR, (int)i);
-        mask |= 1U << i;
+        sav->mask |= 1U << i;
     }
     for (i = 0; i < g_hwb.used_wrps && i < BS_HWB_MAX_HW_SLOTS; i++) {
+        if (sav->mask & (1U << (16 + i)))
+            continue;
         sav->wrp_a[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_WVR, (int)i);
         sav->wrp_c[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_WCR, (int)i);
-        mask |= 1U << (16 + i);
+        sav->mask |= 1U << (16 + i);
     }
-    sav->mask = mask;
-    sav->gen = g_hwb.generation;
 }
 
 static void bs_hwb_restore_slot_current_cpu(int is_exec, uint32_t slot,
@@ -1829,6 +1840,8 @@ static int bs_hwb_hooks_install_locked(void)
     if (g_hwb_exception_hooks[0].installed &&
         g_hwb_exception_hooks[1].installed &&
         g_hwb_finish_hooks[0].installed) {
+        if (!g_hwb.hooks_ref)  /* invariant broken: never leave text unpinned */
+            return -EIO;
         g_hwb.hooks_installed = 1;
         return 0;
     }
@@ -1916,7 +1929,7 @@ static void bs_hwb_stop_locked(void)
     int cpu;
 
     spin_lock_irqsave(&g_hwb_lock, flags);
-    arg.generation = g_hwb.generation;
+    arg.generation = g_hwb.sav_gen;   /* retries must match the saved backups */
     g_hwb.generation++;
     if (!g_hwb.generation)
         g_hwb.generation = 1;
@@ -2115,6 +2128,7 @@ long bs_hwb_set(struct file *owner, void __user *arg)
     memcpy(g_hwb.points, points, sizeof(points[0]) * req.point_count);
     g_hwb.active_snapshot = 0;
     g_hwb.configured = 1;
+    g_hwb.sav_gen = g_hwb.generation;
     bs_hwb_reset_snapshot(g_hwb.snapshots[0]);
     bs_hwb_reset_snapshot(g_hwb.snapshots[1]);
     spin_unlock_irqrestore(&g_hwb_lock, flags);

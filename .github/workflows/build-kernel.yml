@@ -67,12 +67,24 @@ jobs:
               # zero-length $d.* placeholders; any other symbol is user per-CPU
               # data, which vendor kernels (OnePlus) reject before init:
               #   "bs: Could not allocate N bytes percpu data" -> -ENOMEM.
-              percpu_idx=$(llvm-readelf -S --wide bs.ko | sed -n "s/^ *\[ *\\([0-9][0-9]*\\)\\] \\.data\\.\\.percpu .*/\\1/p" | head -n1)
-              bad_percpu=$(llvm-readelf -s --wide bs.ko | awk -v idx="$percpu_idx" "\$7==idx {print \$8}" | grep -vE "(_alloc_tag_cntr|^\\\$d\\.|^$|\\.percpu$)" || true)
+              llvm-readelf -S bs.ko | grep -q "\.symtab" || {
+                echo "::error::bs.ko has no .symtab; the percpu guard cannot run"
+                exit 1
+              }
+              percpu_idxs=$(llvm-readelf -S --wide bs.ko \
+                | sed -n "s/^ *\[ *\\([0-9][0-9]*\\)\\] *\\(\\.data\\.\\.percpu[^ ]*\\).*/\\1/p" \
+                | tr "\n" " ")
+              if [ -z "$percpu_idxs" ]; then
+                echo "::error::a .percpu section is present but its index was not parsed"
+                exit 1
+              fi
+              bad_percpu=$(llvm-readelf -s --wide bs.ko \
+                | awk -v idxs="$percpu_idxs" "BEGIN{n=split(idxs,a); for(i=1;i<=n;i++) want[a[i]+0]=1} \$7 ~ /^[0-9]+\$/ && (\$7+0 in want) {print \$8}" \
+                | grep -vE "(\._alloc_tag_cntr(\$|\\.)|^\\.data\\.\\.percpu|^\\\$[dx](\\.|\$)|^$)" || true)
               if [ -n "$bad_percpu" ]; then
                 echo "::error::bs.ko has user per-CPU data (vendor kernels reject it before init):"
                 echo "$bad_percpu"
-                echo "::error::Use kvzalloc + num_possible_cpus() CPU-indexed arrays instead."
+                echo "::error::Use kvzalloc + nr_cpu_ids CPU-indexed arrays instead."
                 exit 1
               fi
             fi
