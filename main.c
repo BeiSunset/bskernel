@@ -394,6 +394,16 @@ static int __init mod_init(void)
 		g_reboot_kprobe_registered = 1;
 	}
 
+	/* Some vendor kernels do not expose __arm64_sys_reboot to kprobes even
+	 * though the syscall-table hook works. In the default no-syscall stage,
+	 * retry through the syscall hook instead of failing the whole load. */
+	if (bs_stage == BS_STAGE_NO_SYSCALL && reboot_ret < 0) {
+		syscall_ret = syscall_hook_init();
+		if (syscall_ret < 0)
+			bs_warn("syscall fallback unavailable: %d\n",
+				syscall_ret);
+	}
+
 	if (syscall_ret < 0 && reboot_ret < 0) {
 		pr_err("no fd install entry registered\n");
 		ret = reboot_ret;

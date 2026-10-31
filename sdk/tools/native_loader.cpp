@@ -949,6 +949,8 @@ static int load_kmi(const char* kmi, const std::string& params,
             std::printf("%s[x] 内核模块加载失败!%s %s (%d)\n", kRed, kReset,
                         errno_name(error), error);
             err("提示: 失败发生在内核装载阶段，可执行 dmesg 查看内核原因");
+            if (error == ENOENT || error == EINVAL)
+                err("提示: 可能是 vendor 内核缺符号或被裁剪，可先用 --stage 1 验证兼容层");
             break;
         }
         if (stage == kLoadFinit && error == EEXIST) {

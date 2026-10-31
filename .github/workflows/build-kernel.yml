@@ -92,6 +92,10 @@ jobs:
             grep -q "name=bs" /tmp/modinfo.txt
             grep -q "license=GPL" /tmp/modinfo.txt
             grep -q "vermagic=" /tmp/modinfo.txt
+            want_version=$(sed -n "s/^#define BS_MODULE_VERSION \"\\([^\"]*\\)\".*/\\1/p" bs_module.h)
+            test -n "$want_version"
+            grep -q "version=${want_version}" /tmp/modinfo.txt
+            grep -q "srcversion=" /tmp/modinfo.txt
             echo "--- undefined symbols (first 40) ---"
             llvm-nm -u bs.ko | sed -n "1,40p"
             mkdir -p out
