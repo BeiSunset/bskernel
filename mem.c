@@ -410,25 +410,55 @@ static int noinline simple_vmap_pfn_apply_to(pte_t *pte, unsigned long addr, voi
     return 0;
 }
 
-static void *simple_vmap_pfn(unsigned long *pfns, unsigned long count, pgprot_t prot)
-{
-    struct simple_vmap_pfn_ctx data = {
-        .pfns = pfns,
-        .prot = prot,
-        .idx = 0
-    };
-    struct vm_struct *area;
+/* Fill the page tables in chunks so the temporary PFN array does not scale
+ * with the whole memblock region: a 16 GiB region used to need a 32 MiB
+ * vmalloc() here, which failed module init on some large-RAM vendor kernels. */
+#define SIMPLE_VMAP_CHUNK_PAGES 32768UL
 
+static void *simple_vmap_pfn(unsigned long phys_start, unsigned long count,
+                             pgprot_t prot)
+{
+    struct vm_struct *area;
+    unsigned long *pfns;
+    unsigned long chunk;
+    unsigned long done = 0;
+
+    if (!count)
+        return NULL;
     area = get_vm_area_caller(count * PAGE_SIZE, 0, __builtin_return_address(0));
     if (!area)
         return NULL;
 
-    if (apply_to_page_range(&init_mm, (unsigned long)area->addr,
-                            count * PAGE_SIZE, simple_vmap_pfn_apply_to, &data)) {
+    chunk = min(count, SIMPLE_VMAP_CHUNK_PAGES);
+    pfns = vmalloc(sizeof(*pfns) * chunk);
+    if (!pfns) {
         free_vm_area(area);
         return NULL;
     }
 
+    while (done < count) {
+        struct simple_vmap_pfn_ctx data = {
+            .pfns = pfns,
+            .prot = prot,
+            .idx = 0
+        };
+        unsigned long n = min(count - done, chunk);
+        unsigned long i;
+
+        for (i = 0; i < n; i++)
+            pfns[i] = PHYS_PFN(phys_start) + done + i;
+        if (apply_to_page_range(&init_mm,
+                                (unsigned long)area->addr + (done << PAGE_SHIFT),
+                                n << PAGE_SHIFT, simple_vmap_pfn_apply_to,
+                                &data)) {
+            vfree(pfns);
+            free_vm_area(area);
+            return NULL;
+        }
+        done += n;
+    }
+
+    vfree(pfns);
     return area->addr;
 }
 
@@ -438,36 +468,9 @@ static void *simple_mremap(unsigned long phys, size_t size, pgprot_t prot)
     unsigned long phys_end = PAGE_ALIGN_END(phys + size);
     unsigned long count = (phys_end - phys_start) >> PAGE_SHIFT;
     unsigned long offset = phys - phys_start;
-    unsigned long *pfns;
-    unsigned long stack_pfns[MAX_STACK_U64_COUNT];
-    int use_vmalloc = 0;
     void *maped;
 
-    if (count <= MAX_STACK_U64_COUNT) {
-        pfns = stack_pfns;
-    } else if (count <= MAX_KMALLOC_U64_COUNT) {
-        pfns = kmalloc(sizeof(unsigned long) * count, GFP_KERNEL);
-        if (!pfns)
-            return NULL;
-    } else {
-        pfns = vmalloc(sizeof(unsigned long) * count);
-        if (!pfns)
-            return NULL;
-        use_vmalloc = 1;
-    }
-
-    for (unsigned long i = 0; i < count; i++)
-        pfns[i] = PHYS_PFN(phys_start) + i;
-
-    maped = simple_vmap_pfn(pfns, count, prot);
-
-    if (count > MAX_STACK_U64_COUNT) {
-        if (use_vmalloc)
-            vfree(pfns);
-        else
-            kfree(pfns);
-    }
-
+    maped = simple_vmap_pfn(phys_start, count, prot);
     if (!maped)
         return NULL;
 

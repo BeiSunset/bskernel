@@ -319,8 +319,6 @@ static void __init remove_inte_proc_entries(void)
  * and install the fd through the reboot kprobe instead. */
 static int bs_stage = BS_STAGE_NO_SYSCALL;
 module_param(bs_stage, int, 0);
-int bs_log_verbose;
-module_param(bs_log_verbose, int, 0);
 static bool g_mem_inited;
 static bool g_file_inited;
 

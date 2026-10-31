@@ -13,33 +13,12 @@
  * Build with -DBS_LOG_VERBOSE_BUILD (and load with bs_log_verbose=1) on a test
  * device when the detailed trace is needed.
  */
-extern int bs_log_verbose;
-
 #ifdef BS_LOG_VERBOSE_BUILD
 
-#define bs_info(fmt, ...)						\
-	do {								\
-		if (bs_log_verbose)					\
-			pr_info(fmt, ##__VA_ARGS__);			\
-	} while (0)
-
-#define bs_info_ratelimited(fmt, ...)					\
-	do {								\
-		if (bs_log_verbose)					\
-			pr_info_ratelimited(fmt, ##__VA_ARGS__);	\
-	} while (0)
-
-#define bs_warn(fmt, ...)						\
-	do {								\
-		if (bs_log_verbose)					\
-			pr_warn(fmt, ##__VA_ARGS__);			\
-	} while (0)
-
-#define bs_warn_ratelimited(fmt, ...)					\
-	do {								\
-		if (bs_log_verbose)					\
-			pr_warn_ratelimited(fmt, ##__VA_ARGS__);	\
-	} while (0)
+#define bs_info(fmt, ...)		pr_info(fmt, ##__VA_ARGS__)
+#define bs_info_ratelimited(fmt, ...)	pr_info_ratelimited(fmt, ##__VA_ARGS__)
+#define bs_warn(fmt, ...)		pr_warn(fmt, ##__VA_ARGS__)
+#define bs_warn_ratelimited(fmt, ...)	pr_warn_ratelimited(fmt, ##__VA_ARGS__)
 
 #else /* !BS_LOG_VERBOSE_BUILD */
 

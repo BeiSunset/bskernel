@@ -1076,7 +1076,7 @@ static void usage(std::FILE* stream, const char* program) {
         "  %s --list              列出内置的驱动模块\n"
         "  %s --kmi NAME          直接加载指定 KMI（如 android15-6.6）\n"
         "  %s --stage N           分阶段诊断（0=完整 1=仅兼容层 2=+内存 3=+文件 4=+hooks）\n"
-        "  %s --verbose           开启内核详细日志（默认静默，仅调试用）\n"
+
         "  %s --unload            卸载已加载的模块\n"
         "  %s --help              显示本帮助\n"
         "\n"
@@ -1100,7 +1100,7 @@ int main(int argc, char** argv) {
     bool auto_mode = false;
     bool list_only = false;
     bool unload = false;
-    bool verbose = false;
+
     std::string stage;
     std::string kmi;
 
@@ -1133,11 +1133,7 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        if (std::strcmp(argument, "--verbose") == 0 ||
-            std::strcmp(argument, "-v") == 0) {
-            verbose = true;
-            continue;
-        }
+
         if (std::strcmp(argument, "--stage") == 0) {
             if (i + 1 >= argc) {
                 err("--stage 需要指定阶段（0-4）");
@@ -1171,7 +1167,7 @@ int main(int argc, char** argv) {
 
     if (!kmi.empty() && (auto_mode || list_only))
         auto_mode = false;
-    if (unload && (!kmi.empty() || !stage.empty() || verbose || auto_mode)) {
+    if (unload && (!kmi.empty() || !stage.empty() || auto_mode)) {
         err("--unload 不能与加载参数同时使用");
         return kExitUsage;
     }
@@ -1192,11 +1188,7 @@ int main(int argc, char** argv) {
     if (!stage.empty()) {
         params = "bs_stage=" + stage;
     }
-    if (verbose) {
-        if (!params.empty())
-            params += " ";
-        params += "bs_log_verbose=1";
-    }
+
 
     std::string release;
     const int detected = detect_kmi_index(&release);
