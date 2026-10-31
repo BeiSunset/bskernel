@@ -21,6 +21,9 @@ and the loader's `VERSION` / `CURRENT_VERSION` only describe the build.
 
 ## Unreleased
 
+- Porting notes added in `PORTING.md`; CI now rejects any module that contains a
+  per-CPU section. Vendor kernels (seen on OnePlus) refuse to load such modules
+  before init with `bs: Could not allocate N bytes percpu data` and `-ENOMEM`.
 - Loader version check is served by the QQ share page again; the jsDelivr and
   GitHub Raw fallbacks and `version.txt` were removed.
 - Removed the unused docs/ARCHITECTURE.md; architecture notes live with the source.
