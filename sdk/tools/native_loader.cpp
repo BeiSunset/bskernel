@@ -915,11 +915,7 @@ int main(int argc, char** argv) {
             err("驱动完整性验证失败!");
             return kExitFailure;
         }
-        char verified_text[64];
-        std::snprintf(verified_text, sizeof(verified_text),
-                      "驱动完整性验证通过（%u/%u）", verified,
-                      embedded_module_count);
-        ok(verified_text);
+        ok("驱动完整性验证通过!");
         pre_verified = true;
     }
 
