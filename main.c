@@ -4,6 +4,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/atomic.h>
+#include <linux/mutex.h>
 #include <linux/kprobes.h>
 #include <linux/ptrace.h>
 #include <linux/version.h>
@@ -126,19 +127,34 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
  * engines behind them are process-global singletons, so tear them down only
  * when the last control fd closes instead of on the first one. */
 static atomic_t g_drv_fds = ATOMIC_INIT(0);
+/* Marks a file that was successfully counted in g_drv_fds. install_fd() can
+ * fput() a file whose fd it never installed, and __fput() still calls
+ * ->release(): that call must not decrement the counter. */
+static const int g_drv_fd_marker;
+/* Serialises (inc + fd_install) against (dec + engine teardown), so a previous
+ * session's tail cannot stop a session a new fd just started. */
+static DEFINE_MUTEX(g_drv_lock);
 
 static int drv_release(struct inode *inode, struct file *filp)
 {
+    int last;
+
     /* Per-owner state dies with this fd; the capture/touch engines are
-     * process-global, so only the last control fd may stop them. Otherwise one
-     * short-lived fd (or another uid<=1000 process) would tear down a capture
-     * or touch session that a different fd still owns. */
+     * process-global, so only the last control fd may stop them. */
     bs_hwb_release_owner(filp);
-    if (!atomic_dec_and_test(&g_drv_fds))
+
+    if (filp->private_data != &g_drv_fd_marker)
         return 0;
-    udp_capture_stop();
-    touch_v2_release_all();
-    touch_release_all();
+    filp->private_data = NULL;
+
+    mutex_lock(&g_drv_lock);
+    last = atomic_dec_and_test(&g_drv_fds);
+    if (last) {
+        udp_capture_stop();
+        touch_v2_release_all();
+        touch_release_all();
+    }
+    mutex_unlock(&g_drv_lock);
     return 0;
 }
 
@@ -168,12 +184,17 @@ static int install_fd(void)
 
     fd = get_unused_fd_flags(O_CLOEXEC);
     if (fd < 0) {
+        /* __fput() -> drv_release() still runs; private_data is not the marker
+         * so the counter is left untouched. */
         fput(filp);
         return fd;
     }
 
-    fd_install(fd, filp);
+    mutex_lock(&g_drv_lock);
+    filp->private_data = (void *)&g_drv_fd_marker;
     atomic_inc(&g_drv_fds);
+    fd_install(fd, filp);
+    mutex_unlock(&g_drv_lock);
     return fd;
 }
 

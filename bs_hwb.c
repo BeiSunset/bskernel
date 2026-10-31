@@ -29,6 +29,7 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/kallsyms.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/mutex.h>
 #include <linux/perf_event.h>
@@ -1710,16 +1711,25 @@ static int bs_hwb_hooks_install_locked(void)
     if (g_hwb.hooks_installed)
         return 0;
 
+    /* Hold a reference while any kernel text branches into our trampolines:
+     * if a restore ever fails, rmmod fails with -EBUSY instead of freeing the
+     * text those branches jump to. Released only after a clean restore. */
+    if (!try_module_get(THIS_MODULE))
+        return -ENODEV;
+
     ret = bs_hwb_hook_install_many(g_hwb_exception_hooks,
                                     ARRAY_SIZE(g_hwb_exception_hooks));
-    if (ret)
+    if (ret) {
+        module_put(THIS_MODULE);
         return ret;
+    }
 
     ret = bs_hwb_hook_install_many(g_hwb_finish_hooks,
                                     ARRAY_SIZE(g_hwb_finish_hooks));
     if (ret) {
         bs_hwb_hook_remove_many(g_hwb_exception_hooks,
                                  ARRAY_SIZE(g_hwb_exception_hooks));
+        module_put(THIS_MODULE);
         return ret;
     }
 
@@ -1743,10 +1753,13 @@ static void bs_hwb_hooks_remove_locked(void)
                atomic_read(&g_hwb_finish_returns_inflight) == 0);
     if (bs_hwb_hook_remove_many(g_hwb_exception_hooks,
                                 ARRAY_SIZE(g_hwb_exception_hooks))) {
-        pr_err("hwb: exception hooks still patched, keeping state\n");
+        /* Keep the module pin: rmmod must not free text that is still
+         * branched into. The pin is released only by a clean restore. */
+        pr_err("hwb: exception hooks still patched, keeping module pinned\n");
         return;
     }
     g_hwb.hooks_installed = 0;
+    module_put(THIS_MODULE);
 }
 
 static void bs_hwb_stop_locked(void)
@@ -2042,6 +2055,13 @@ void bs_hwb_exit(void)
 {
     mutex_lock(&g_hwb_mutex);
     bs_hwb_stop_locked();
+    if (g_hwb.hooks_installed) {
+        /* Should be unreachable (the module pin keeps rmmod away); do not free
+         * anything that the still-patched entry could jump into. */
+        pr_err("hwb: hooks not restored at exit, refusing teardown\n");
+        mutex_unlock(&g_hwb_mutex);
+        return;
+    }
     vfree(g_hwb.snapshots[0]);
     vfree(g_hwb.snapshots[1]);
     g_hwb.snapshots[0] = NULL;
