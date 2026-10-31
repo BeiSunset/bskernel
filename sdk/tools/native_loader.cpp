@@ -728,8 +728,6 @@ static void show_menu(int detected) {
 
 static int run_menu(const std::string& /*release*/, int detected,
                     const std::string& params, bool verify) {
-    show_menu(detected);
-
     char line[64];
     for (;;) {
         std::printf("\n%s请根据当前内核版本，从列表中选择最接近的驱动方案安装：%s\n\n",
