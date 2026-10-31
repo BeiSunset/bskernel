@@ -46,6 +46,22 @@ if(BSKERNEL_BUILD_EXAMPLE)
     install(TARGETS bs_example RUNTIME DESTINATION bin)
 endif()
 
+# Self-contained loader: all six modules are embedded (zlib + XOR) at build
+# time, loaded through memfd + finit_module so no .ko ever touches the disk.
+option(BSKERNEL_BUILD_NATIVE_LOADER "Build the self-contained BSLoADERDriver" OFF)
+set(BSKERNEL_EMBEDDED_HEADER "" CACHE STRING "Directory holding bs_native_modules.h")
+if(BSKERNEL_BUILD_NATIVE_LOADER)
+    add_executable(BSLoaderDriver tools/native_loader.cpp)
+    target_compile_features(BSLoaderDriver PRIVATE cxx_std_20)
+    target_compile_options(BSLoaderDriver PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_definitions(BSLoaderDriver PRIVATE BSKERNEL_EMBEDDED_MODULES=1)
+    if(BSKERNEL_EMBEDDED_HEADER)
+        target_include_directories(BSLoaderDriver PRIVATE "${BSKERNEL_EMBEDDED_HEADER}")
+    endif()
+    target_link_libraries(BSLoaderDriver PRIVATE z)
+    install(TARGETS BSLoADERDriver RUNTIME DESTINATION bin)
+endif()
+
 include(CMakePackageConfigHelpers)
 configure_package_config_file(cmake/bskernelConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/bskernelConfig.cmake"
