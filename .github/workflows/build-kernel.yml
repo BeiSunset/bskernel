@@ -151,7 +151,11 @@ jobs:
       - name: Fetch mbedTLS for the HTTPS version check
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch v3.6.2 --recurse-submodules --shallow-submodules https://github.com/Mbed-TLS/mbedtls.git third_party/mbedtls
+          git init third_party/mbedtls
+          git -C third_party/mbedtls remote add origin https://github.com/Mbed-TLS/mbedtls.git
+          git -C third_party/mbedtls fetch --depth 1 origin 107ea89daaefb9867ea9121002fbbdf926780e98
+          git -C third_party/mbedtls checkout FETCH_HEAD
+          git -C third_party/mbedtls submodule update --init --depth 1
           git -C third_party/mbedtls rev-parse HEAD
 
       - name: Build BSLoADERDriver with the NDK
@@ -171,7 +175,7 @@ jobs:
           install -m 0755 build/native/BSLoaderDriver out/BSLoaderDriver.sh
           "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/BSLoaderDriver.sh
           file out/BSLoaderDriver.sh || true
-          sha256sum out/BSLoaderDriver.sh > out/BSLoaderDriver.sh.sha256
+          (cd out && sha256sum BSLoADERDriver.sh > BSLoADERDriver.sh.sha256)
 
       - name: Upload native loader
         uses: actions/upload-artifact@v4

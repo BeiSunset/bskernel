@@ -18,10 +18,14 @@
 #include <vector>
 
 #include <dirent.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
+#include <time.h>
 #include <unistd.h>
 #include <zlib.h>
 
@@ -363,6 +367,61 @@ static bool decode_and_verify(const embedded_module& module,
 static const char* const kVersionUrl =
     "/2687bec922cbed3dc7b54770e8337f7f?qq_aio_chat_type=2";
 
+static long long monotonic_ms() {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<long long>(now.tv_sec) * 1000 +
+           static_cast<long long>(now.tv_nsec) / 1000000;
+}
+
+/* Non-blocking connect with a deadline: a dead network must not hang the UI. */
+static int tcp_connect_timeout(const char* host, const char* port,
+                               int timeout_ms) {
+    struct addrinfo hints;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* addresses = nullptr;
+    if (getaddrinfo(host, port, &hints, &addresses) != 0)
+        return -1;
+
+    int connected_fd = -1;
+    for (struct addrinfo* entry = addresses; entry && connected_fd < 0;
+         entry = entry->ai_next) {
+        const int fd = socket(entry->ai_family, entry->ai_socktype, 0);
+        if (fd < 0)
+            continue;
+        const int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+            close(fd);
+            continue;
+        }
+        int result = connect(fd, entry->ai_addr, entry->ai_addrlen);
+        if (result != 0 && errno == EINPROGRESS) {
+            struct pollfd poller;
+            poller.fd = fd;
+            poller.events = POLLOUT;
+            poller.revents = 0;
+            if (poll(&poller, 1, timeout_ms) > 0) {
+                int socket_error = 0;
+                socklen_t length = sizeof(socket_error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error,
+                               &length) == 0 &&
+                    socket_error == 0)
+                    result = 0;
+            }
+        }
+        if (result == 0) {
+            (void)fcntl(fd, F_SETFL, flags);
+            connected_fd = fd;
+        } else {
+            close(fd);
+        }
+    }
+    freeaddrinfo(addresses);
+    return connected_fd;
+}
+
 /* Trust anchors from the platform store; silently skip unreadable entries. */
 static void load_system_ca(mbedtls_x509_crt* chain) {
     DIR* dir = opendir("/system/etc/security/cacerts");
@@ -395,6 +454,7 @@ static bool https_get(const char* host, const char* path, std::string* body) {
     mbedtls_ctr_drbg_init(&drbg);
 
     bool ok_result = false;
+    bool handshake_done = false;
     const char* personal = "bsloader";
     char request[512];
 
@@ -418,9 +478,12 @@ static bool https_get(const char* host, const char* path, std::string* body) {
         goto out;
     if (mbedtls_ssl_set_hostname(&ssl, host) != 0)
         goto out;
-    if (mbedtls_net_connect(&server, host, "443",
-                            MBEDTLS_NET_PROTO_TCP) != 0)
-        goto out;
+    {
+        const int fd = tcp_connect_timeout(host, "443", 5000);
+        if (fd < 0)
+            goto out;
+        server.fd = fd;
+    }
 
     {
         struct timeval timeout;
@@ -434,26 +497,66 @@ static bool https_get(const char* host, const char* path, std::string* body) {
 
     mbedtls_ssl_set_bio(&ssl, &server, mbedtls_net_send, mbedtls_net_recv,
                         nullptr);
-    if (mbedtls_ssl_handshake(&ssl) != 0)
-        goto out;
+    {
+        const long long deadline = monotonic_ms() + 8000;
+        for (;;) {
+            const int result = mbedtls_ssl_handshake(&ssl);
+            if (result == 0) {
+                handshake_done = true;
+                break;
+            }
+            if (result != MBEDTLS_ERR_SSL_WANT_READ &&
+                result != MBEDTLS_ERR_SSL_WANT_WRITE)
+                break;
+            if (monotonic_ms() > deadline)
+                break;
+        }
+        if (!handshake_done)
+            goto out;
+    }
 
     std::snprintf(request, sizeof(request),
                   "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: bsloader/%s\r\n"
-                  "Accept: */*\r\nConnection: close\r\n\r\n",
+                  "Accept: */*\r\nAccept-Encoding: identity\r\n"
+                  "Connection: close\r\n\r\n",
                   path, host, kVersionFull);
-    if (mbedtls_ssl_write(&ssl,
-                          reinterpret_cast<const unsigned char*>(request),
-                          std::strlen(request)) <= 0)
-        goto out;
+    {
+        const size_t request_len = std::strlen(request);
+        size_t sent = 0;
+        const long long deadline = monotonic_ms() + 8000;
+        while (sent < request_len) {
+            const int written = mbedtls_ssl_write(
+                &ssl,
+                reinterpret_cast<const unsigned char*>(request) + sent,
+                request_len - sent);
+            if (written > 0) {
+                sent += size_t(written);
+                continue;
+            }
+            if (written == MBEDTLS_ERR_SSL_WANT_READ ||
+                written == MBEDTLS_ERR_SSL_WANT_WRITE) {
+                if (monotonic_ms() > deadline)
+                    break;
+                continue;
+            }
+            break;
+        }
+        if (sent != request_len)
+            goto out;
+    }
 
     {
         std::string response;
         unsigned char buffer[2048];
+        const long long deadline = monotonic_ms() + 10000;
         for (;;) {
             const int got = mbedtls_ssl_read(&ssl, buffer, sizeof(buffer));
             if (got == MBEDTLS_ERR_SSL_WANT_READ ||
-                got == MBEDTLS_ERR_SSL_WANT_WRITE)
+                got == MBEDTLS_ERR_SSL_WANT_WRITE) {
+                if (monotonic_ms() > deadline)
+                    break;
                 continue;
+            }
             if (got <= 0)
                 break;
             response.append(reinterpret_cast<const char*>(buffer),
@@ -463,15 +566,17 @@ static bool https_get(const char* host, const char* path, std::string* body) {
         }
         if (response.empty())
             goto out;
-        const size_t body_start = response.find("\r\n\r\n");
-        if (body_start == std::string::npos)
+        if (response.find("\r\n\r\n") == std::string::npos)
             goto out;
-        *body = response.substr(body_start + 4);
+        /* Keep the raw response: html_content may sit in chunked data, and
+         * searching the whole buffer is robust against header/body framing. */
+        *body = response;
         ok_result = true;
     }
 
 out:
-    mbedtls_ssl_close_notify(&ssl);
+    if (handshake_done)
+        mbedtls_ssl_close_notify(&ssl);
     mbedtls_net_free(&server);
     mbedtls_ssl_free(&ssl);
     mbedtls_ssl_config_free(&conf);
@@ -795,7 +900,7 @@ static void usage(std::FILE* stream, const char* program) {
         "memfd + finit_module 注入内核，不会在磁盘上释放任何 .ko 文件。\n"
         "需要 root 权限；本程序不依赖 shell 与 toybox 命令。\n",
         kVersion, program, program, program, program, program, program,
-        program, program, program);
+        program);
 }
 
 static int require_root() {
@@ -853,6 +958,16 @@ int main(int argc, char** argv) {
                 return kExitUsage;
             }
             stage = argv[++i];
+            {
+                char* stage_end = nullptr;
+                const long stage_value =
+                    std::strtol(stage.c_str(), &stage_end, 10);
+                if (stage_end == stage.c_str() || *stage_end != '\0' ||
+                    stage_value < 0 || stage_value > 4) {
+                    err("--stage 需要 0-4 之间的数字");
+                    return kExitUsage;
+                }
+            }
             continue;
         }
         if (std::strcmp(argument, "--kmi") == 0) {
