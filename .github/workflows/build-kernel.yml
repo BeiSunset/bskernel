@@ -72,7 +72,7 @@ jobs:
               if [ -n "$bad_percpu" ]; then
                 echo "::error::bs.ko has user per-CPU data (vendor kernels reject it before init):"
                 echo "$bad_percpu"
-                echo "::error::Use kvzalloc + num_possible_cpus() CPU-indexed arrays; see PORTING.md."
+                echo "::error::Use kvzalloc + num_possible_cpus() CPU-indexed arrays instead."
                 exit 1
               fi
             fi
