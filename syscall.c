@@ -212,7 +212,17 @@ static asmlinkage long __nocfi syscall_install_handler(const struct pt_regs *reg
         return -ENOSYS;
 
     outp = (int __user *)(unsigned long)regs->regs[3];
-    return install_fd_to_user(outp);
+    /* This handler is reached from the patched sys_call_table[]; pin the
+     * module so rmmod cannot free its text while install_fd_to_user() runs. */
+    {
+        long ret;
+
+        if (!try_module_get(THIS_MODULE))
+            return -ENOSYS;
+        ret = install_fd_to_user(outp);
+        module_put(THIS_MODULE);
+        return ret;
+    }
 }
 
 static syscall_fn_t syscall_lookup_ni(void)

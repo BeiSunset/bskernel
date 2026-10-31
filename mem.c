@@ -1529,7 +1529,12 @@ long mem_read_ctx_read(struct mem_read_ctx *ctx, uint64_t addr,
     if (size == 0 || size > (4 * 1024 * 1024))
         return -EINVAL;
 
+    /* follow_phys_fast() walks ctx->mm's page tables; hold the read lock so a
+     * concurrent munmap/exit in the target cannot free a table under us. No
+     * user copy happens inside, so nothing can fault while locked. */
+    mmap_read_lock(ctx->mm);
     ret = nc_memread_kernel(ctx->mm, (unsigned long)addr, buf, size);
+    mmap_read_unlock(ctx->mm);
     if (ret < 0)
         return ret;
     if ((uint64_t)ret != size)

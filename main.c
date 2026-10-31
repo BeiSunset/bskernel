@@ -3,6 +3,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/atomic.h>
 #include <linux/kprobes.h>
 #include <linux/ptrace.h>
 #include <linux/version.h>
@@ -123,7 +124,13 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 static int drv_release(struct inode *inode, struct file *filp)
 {
+    /* Per-owner state dies with this fd; the capture/touch engines are
+     * process-global, so only the last control fd may stop them. Otherwise one
+     * short-lived fd (or another uid<=1000 process) would tear down a capture
+     * or touch session that a different fd still owns. */
     bs_hwb_release_owner(filp);
+    if (!atomic_dec_and_test(&g_drv_fds))
+        return 0;
     udp_capture_stop();
     touch_v2_release_all();
     touch_release_all();
@@ -138,6 +145,10 @@ static const struct file_operations drv_fops = {
 };
 
 static int g_reboot_kprobe_registered;
+/* Control fds are handed out per magic reboot() call; the capture/touch
+ * engines behind them are process-global singletons, so tear them down only
+ * when the last control fd closes instead of on the first one. */
+static atomic_t g_drv_fds = ATOMIC_INIT(0);
 
 /* ---- fd installation ---- */
 
@@ -146,18 +157,22 @@ static int install_fd(void)
     struct file *filp;
     int fd;
 
-    fd = get_unused_fd_flags(O_CLOEXEC);
-    if (fd < 0)
-        return fd;
-
+    /* Create the file before reserving the fd: its fops pin THIS_MODULE, so the
+     * temporary pin taken in reboot_handler_pre() is never the last reference
+     * when the task_work callback drops it. */
     filp = anon_inode_getfile("[eventpoll]", &drv_fops, NULL,
                               O_RDWR | O_CLOEXEC);
-    if (IS_ERR(filp)) {
-        put_unused_fd(fd);
+    if (IS_ERR(filp))
         return PTR_ERR(filp);
+
+    fd = get_unused_fd_flags(O_CLOEXEC);
+    if (fd < 0) {
+        fput(filp);
+        return fd;
     }
 
     fd_install(fd, filp);
+    atomic_inc(&g_drv_fds);
     return fd;
 }
 
@@ -241,8 +256,10 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
 
     if (task_work_add(current, &tw->cb, TWA_RESUME)) {
         kfree(tw);
-        module_put(THIS_MODULE);
+        /* Log before dropping the pin: module text/rodata must not be touched
+         * after module_put() may have released the last reference. */
         bs_warn("task_work_add failed\n");
+        module_put(THIS_MODULE);
     }
 
     return 0;
@@ -412,6 +429,14 @@ static void __exit mod_exit(void)
     }
     if (bs_stage == BS_STAGE_SYSCALL) {
         syscall_hook_exit();
+        /* This stage hands out the control fd, so every hook engine behind an
+         * ioctl is reachable. Without teardown the kprobes, the in-kernel text
+         * hooks and the swapped file->f_op would outlive free_module(). */
+        udp_capture_exit();
+        bs_hwb_exit();
+        touch_v2_release_all();
+        touch_exit();
+        touch_v2_exit();
         if (g_file_inited)
             bs_file_io_exit();
         if (g_mem_inited)
@@ -424,6 +449,12 @@ static void __exit mod_exit(void)
             unregister_kprobe(&kp_reboot);
             g_reboot_kprobe_registered = 0;
         }
+        /* Same as stage 4: the reboot kprobe is the fd install entry here. */
+        udp_capture_exit();
+        bs_hwb_exit();
+        touch_v2_release_all();
+        touch_exit();
+        touch_v2_exit();
         if (g_file_inited)
             bs_file_io_exit();
         if (g_mem_inited)

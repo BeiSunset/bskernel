@@ -343,13 +343,16 @@ static void cleanup_patch(struct work_struct *work)
         pr_err("sensor session cleanup lost target (%ld)\n", PTR_ERR(mm));
         return;
     }
-    delta_ret = transfer(session, mm, session->patch.delta_addr, &zero, sizeof(zero), true);
+    /* Unpublish first: while the GOT still points at the trampoline, zeroing
+     * the delta slot would make it call through a cleared target if the GOT
+     * restore then fails. */
     got_ret = transfer(session, mm, session->patch.got_addr,
                        &session->patch.original, sizeof(u64), true);
+    delta_ret = transfer(session, mm, session->patch.delta_addr, &zero, sizeof(zero), true);
     if (delta_ret != sizeof(u64) || got_ret != sizeof(u64)) {
-        delta_ret = transfer(session, mm, session->patch.delta_addr, &zero, sizeof(zero), true);
         got_ret = transfer(session, mm, session->patch.got_addr,
                            &session->patch.original, sizeof(u64), true);
+        delta_ret = transfer(session, mm, session->patch.delta_addr, &zero, sizeof(zero), true);
     }
     if (delta_ret != sizeof(u64) || got_ret != sizeof(u64)) {
         session->cleanup_failed = true;
