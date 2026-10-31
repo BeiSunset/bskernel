@@ -21,6 +21,7 @@
 
 #include <linux/bitmap.h>
 #include <linux/build_bug.h>
+#include <linux/cred.h>
 #include <linux/capability.h>
 #include <linux/cpu.h>
 #include <linux/cpumask.h>
@@ -95,6 +96,14 @@ struct bs_hwb_session {
     struct bs_hwb_snapshot *snapshots[2];
     int active_snapshot;
 };
+
+/* Debug-register capture is cross-process introspection. Accept init-userns
+ * CAP_SYS_PTRACE, or plain uid 0 (some su implementations drop caps). */
+static bool bs_hwb_may_ptrace(void)
+{
+    return capable(CAP_SYS_PTRACE) ||
+           uid_eq(current_euid(), GLOBAL_ROOT_UID);
+}
 
 static DEFINE_MUTEX(g_hwb_mutex);
 static DEFINE_SPINLOCK(g_hwb_lock);
@@ -1718,9 +1727,11 @@ static int bs_hwb_hooks_install_locked(void)
 {
     int ret;
 
-    /* install_one() is idempotent: after a partial restore failure, missing
-     * hooks must be re-added instead of trusting the group flag. */
-    if (bs_hwb_any_hook_installed()) {
+    /* install_one() is idempotent, so only skip when every hook is present;
+     * after a partial restore failure the missing ones must be re-added. */
+    if (g_hwb_exception_hooks[0].installed &&
+        g_hwb_exception_hooks[1].installed &&
+        g_hwb_finish_hooks[0].installed) {
         g_hwb.hooks_installed = 1;
         return 0;
     }
@@ -1817,13 +1828,16 @@ static void bs_hwb_stop_locked(void)
     bs_hwb_hooks_remove_locked();
 
     spin_lock_irqsave(&g_hwb_lock, flags);
-    g_hwb.target_tid = 0;
-    if (!g_hwb.hooks_installed)     /* failed restore: keep owner for a retry */
+    if (!g_hwb.hooks_installed) {
+        g_hwb.target_tid = 0;
         g_hwb.owner = NULL;
-    g_hwb.point_count = 0;
-    g_hwb.used_brps = 0;
-    g_hwb.used_wrps = 0;
-    memset(g_hwb.points, 0, sizeof(g_hwb.points));
+        g_hwb.point_count = 0;
+        g_hwb.used_brps = 0;
+        g_hwb.used_wrps = 0;
+        memset(g_hwb.points, 0, sizeof(g_hwb.points));
+    }
+    /* If a restore failed, keep points/used_* so the next stop() can still
+     * match and clear the stale slots and retry the restore. */
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 }
 
@@ -1852,7 +1866,7 @@ long bs_hwb_slots(void __user *arg)
 
     if (copy_from_user(&target_tid, arg, sizeof(target_tid)))
         return -EFAULT;
-    if (!capable(CAP_SYS_PTRACE))
+    if (!bs_hwb_may_ptrace())
         return -EPERM;
     if (target_tid <= 0)
         return -EINVAL;
@@ -1912,7 +1926,7 @@ long bs_hwb_set(struct file *owner, void __user *arg)
     /* Cross-process instruction/data watchpoints expose another task's GPRs,
      * stack pointer and SIMD registers: require the same capability ptrace
      * itself requires. */
-    if (!capable(CAP_SYS_PTRACE))
+    if (!bs_hwb_may_ptrace())
         return -EPERM;
     if (req.target_tid <= 0 || req.point_count == 0 ||
         req.point_count > BS_HWB_MAX_POINTS)
@@ -2012,7 +2026,7 @@ long bs_hwb_read(void __user *arg)
 
     if (copy_from_user(&req, arg, sizeof(req)))
         return -EFAULT;
-    if (!capable(CAP_SYS_PTRACE))
+    if (!bs_hwb_may_ptrace())
         return -EPERM;
 
     req.out_size = sizeof(struct bs_hwb_snapshot);
@@ -2053,7 +2067,7 @@ out_unlock:
 
 long bs_hwb_clear(void)
 {
-    if (!capable(CAP_SYS_PTRACE))
+    if (!bs_hwb_may_ptrace())
         return -EPERM;
     mutex_lock(&g_hwb_mutex);
     bs_hwb_stop_locked();
@@ -2086,6 +2100,10 @@ void bs_hwb_release_owner(struct file *owner)
     spin_unlock_irqrestore(&g_hwb_lock, flags);
     if (should_clear)
         bs_hwb_stop_locked();
+    spin_lock_irqsave(&g_hwb_lock, flags);
+    if (g_hwb.hooks_installed && g_hwb.owner == owner)
+        g_hwb.owner = NULL;     /* file is going away; the module pin keeps it alive */
+    spin_unlock_irqrestore(&g_hwb_lock, flags);
     mutex_unlock(&g_hwb_mutex);
 }
 
