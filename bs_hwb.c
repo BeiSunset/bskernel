@@ -1340,9 +1340,9 @@ static void bs_hwb_clear_matching_current_cpu_locked(u64 generation);
 
 static void bs_hwb_clear_cpu_cb(void *data)
 {
+    struct bs_hwb_cpu_clear_arg *arg = data;
     unsigned long flags;
 
-    (void)data;
     /* Only clear slots that still hold exactly our programmed address/control.
      * Blindly zeroing every slot would wipe this CPU's kernel perf/ptrace
      * watchpoints, whose bookkeeping lives in bp_on_reg[]/wp_on_reg[]. */
