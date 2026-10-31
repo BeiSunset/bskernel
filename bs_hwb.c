@@ -83,6 +83,7 @@
 struct bs_hwb_session {
     int configured;
     int hooks_installed;
+    int hooks_ref;                /* module reference held while text is patched */
     int target_tid;
     struct task_struct *target;   /* pinned at SET time: TIDs are recycled */
     uint64_t generation;
@@ -355,7 +356,7 @@ static void bs_hwb_enable_cpu(void)
                  : "memory");
 }
 
-static void bs_hwb_disable_cpu(void)
+static void __maybe_unused bs_hwb_disable_cpu(void)
 {
     uint64_t mdscr;
 
@@ -1304,7 +1305,7 @@ static void bs_hwb_correlate_perf_slots(struct bs_hwb_slots_req *req)
     }
 }
 
-static void bs_hwb_clear_cpu_slots(uint32_t used_brps, uint32_t used_wrps)
+static void __maybe_unused bs_hwb_clear_cpu_slots(uint32_t used_brps, uint32_t used_wrps)
 {
     uint32_t i;
 
@@ -1704,42 +1705,61 @@ static struct bs_hwb_hook_entry g_hwb_finish_hooks[] = {
     BS_HWB_HOOK("finish_task_switch", bs_hwb_finish_task_switch_work),
 };
 
+/* True when any entry is still patched, including entries whose restore failed
+ * and whose bookkeeping was therefore not cleared. */
+static bool bs_hwb_any_hook_installed(void)
+{
+    return g_hwb_exception_hooks[0].installed ||
+           g_hwb_exception_hooks[1].installed ||
+           g_hwb_finish_hooks[0].installed;
+}
+
 static int bs_hwb_hooks_install_locked(void)
 {
     int ret;
 
-    if (g_hwb.hooks_installed)
+    /* install_one() is idempotent: after a partial restore failure, missing
+     * hooks must be re-added instead of trusting the group flag. */
+    if (bs_hwb_any_hook_installed()) {
+        g_hwb.hooks_installed = 1;
         return 0;
+    }
 
     /* Hold a reference while any kernel text branches into our trampolines:
      * if a restore ever fails, rmmod fails with -EBUSY instead of freeing the
      * text those branches jump to. Released only after a clean restore. */
-    if (!try_module_get(THIS_MODULE))
-        return -ENODEV;
+    if (!g_hwb.hooks_ref) {
+        if (!try_module_get(THIS_MODULE))
+            return -ENODEV;
+        g_hwb.hooks_ref = 1;
+    }
 
     ret = bs_hwb_hook_install_many(g_hwb_exception_hooks,
                                     ARRAY_SIZE(g_hwb_exception_hooks));
-    if (ret) {
-        module_put(THIS_MODULE);
-        return ret;
-    }
+    if (ret)
+        goto out_partial;
 
     ret = bs_hwb_hook_install_many(g_hwb_finish_hooks,
                                     ARRAY_SIZE(g_hwb_finish_hooks));
-    if (ret) {
-        bs_hwb_hook_remove_many(g_hwb_exception_hooks,
-                                 ARRAY_SIZE(g_hwb_exception_hooks));
-        module_put(THIS_MODULE);
-        return ret;
-    }
+    if (ret)
+        goto out_partial;
 
     g_hwb.hooks_installed = 1;
     return 0;
+
+out_partial:
+    if (bs_hwb_any_hook_installed()) {
+        g_hwb.hooks_installed = 1;
+    } else if (g_hwb.hooks_ref) {
+        g_hwb.hooks_ref = 0;
+        module_put(THIS_MODULE);
+    }
+    return ret;
 }
 
 static void bs_hwb_hooks_remove_locked(void)
 {
-    if (!g_hwb.hooks_installed)
+    if (!g_hwb.hooks_installed && !bs_hwb_any_hook_installed())
         return;
 
     bs_hwb_hook_remove_many(g_hwb_finish_hooks, ARRAY_SIZE(g_hwb_finish_hooks));
@@ -1759,7 +1779,10 @@ static void bs_hwb_hooks_remove_locked(void)
         return;
     }
     g_hwb.hooks_installed = 0;
-    module_put(THIS_MODULE);
+    if (g_hwb.hooks_ref) {
+        g_hwb.hooks_ref = 0;
+        module_put(THIS_MODULE);
+    }
 }
 
 static void bs_hwb_stop_locked(void)
@@ -1795,7 +1818,8 @@ static void bs_hwb_stop_locked(void)
 
     spin_lock_irqsave(&g_hwb_lock, flags);
     g_hwb.target_tid = 0;
-    g_hwb.owner = NULL;
+    if (!g_hwb.hooks_installed)     /* failed restore: keep owner for a retry */
+        g_hwb.owner = NULL;
     g_hwb.point_count = 0;
     g_hwb.used_brps = 0;
     g_hwb.used_wrps = 0;
@@ -1828,6 +1852,8 @@ long bs_hwb_slots(void __user *arg)
 
     if (copy_from_user(&target_tid, arg, sizeof(target_tid)))
         return -EFAULT;
+    if (!capable(CAP_SYS_PTRACE))
+        return -EPERM;
     if (target_tid <= 0)
         return -EINVAL;
 
@@ -1901,6 +1927,15 @@ long bs_hwb_set(struct file *owner, void __user *arg)
     }
     if (!task)
         return -ESRCH;
+    {
+        struct mm_struct *mm = get_task_mm(task);
+
+        if (!mm) {              /* task is exiting: it will never hit */
+            put_task_struct(task);
+            return -ESRCH;
+        }
+        mmput(mm);
+    }
 
     brps = bs_hwb_get_brps();
     wrps = bs_hwb_get_wrps();
@@ -1913,7 +1948,7 @@ long bs_hwb_set(struct file *owner, void __user *arg)
         points[i] = req.points[i];
         ret = bs_hwb_parse_point(&points[i], &addr, &ctrl, &is_exec);
         if (ret)
-            return ret;
+            goto out_put;
 
         if (is_exec)
             brps_needed++;
@@ -1921,8 +1956,10 @@ long bs_hwb_set(struct file *owner, void __user *arg)
             wrps_needed++;
     }
 
-    if (brps_needed > (uint32_t)brps || wrps_needed > (uint32_t)wrps)
-        return -ENOSPC;
+    if (brps_needed > (uint32_t)brps || wrps_needed > (uint32_t)wrps) {
+        ret = -ENOSPC;
+        goto out_put;
+    }
 
     mutex_lock(&g_hwb_mutex);
 
@@ -1958,6 +1995,7 @@ out_unlock:
     if (ret)
         bs_hwb_stop_locked();
     mutex_unlock(&g_hwb_mutex);
+out_put:
     if (task)
         put_task_struct(task);
     return ret;
@@ -2036,7 +2074,7 @@ void bs_hwb_release_owner(struct file *owner)
         return;
 
     spin_lock_irqsave(&g_hwb_lock, flags);
-    should_clear = g_hwb.configured && g_hwb.owner == owner;
+    should_clear = (g_hwb.configured || g_hwb.hooks_installed) && g_hwb.owner == owner;
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 
     if (!should_clear)
@@ -2044,7 +2082,7 @@ void bs_hwb_release_owner(struct file *owner)
 
     mutex_lock(&g_hwb_mutex);
     spin_lock_irqsave(&g_hwb_lock, flags);
-    should_clear = g_hwb.configured && g_hwb.owner == owner;
+    should_clear = (g_hwb.configured || g_hwb.hooks_installed) && g_hwb.owner == owner;
     spin_unlock_irqrestore(&g_hwb_lock, flags);
     if (should_clear)
         bs_hwb_stop_locked();
