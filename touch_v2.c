@@ -262,6 +262,12 @@ static bool touch_v2_flush_inline(struct input_dev *dev)
     unsigned int i;
     unsigned long flags;
 
+    /* The kprobe is on the global input_event(), so it fires for every input
+     * device. Never drain the touch pool into a non-touch device: a key or
+     * power-button SYN_REPORT would otherwise steal the queued frame. */
+    if (!touch_v2_is_touchscreen(dev))
+        return false;
+
     if (READ_ONCE(g_touch_v2_injecting))
         return true;
 
@@ -319,7 +325,7 @@ static int touch_v2_input_event_pre(struct kprobe *p, struct pt_regs *regs)
     unsigned int type = (unsigned int)regs->regs[1];
     unsigned int code = (unsigned int)regs->regs[2];
 
-    if (type == EV_SYN && code == SYN_REPORT) {
+    if (type == EV_SYN && code == SYN_REPORT && touch_v2_is_touchscreen(dev)) {
         if (!touch_v2_flush_inline(dev))
             touch_v2_schedule_flush(dev);
     }
