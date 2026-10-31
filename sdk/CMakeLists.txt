@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(bskernel VERSION 0.1.0 LANGUAGES CXX)
+    project(bskernel VERSION 1.0.5 LANGUAGES CXX)
 endif()
 
 if(NOT ANDROID OR NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
@@ -82,7 +82,7 @@ configure_package_config_file(cmake/bskernelConfig.cmake.in
     INSTALL_DESTINATION lib/cmake/bskernel
 )
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/bskernelConfigVersion.cmake"
-    VERSION 0.1.0 COMPATIBILITY SameMajorVersion
+    VERSION 1.0.5 COMPATIBILITY SameMajorVersion
 )
 install(TARGETS bskernel_sdk EXPORT bskernelTargets ARCHIVE DESTINATION lib)
 install(EXPORT bskernelTargets NAMESPACE bskernel:: DESTINATION lib/cmake/bskernel)
