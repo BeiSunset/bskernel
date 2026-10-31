@@ -1351,63 +1351,86 @@ static void bs_hwb_clear_cpu_cb(void *data)
     spin_unlock_irqrestore(&g_hwb_lock, flags);
 }
 
-/* Per-CPU copy of the debug slots this session displaced. The kernel's
- * hw_breakpoint layer keeps its own bookkeeping (bp_on_reg[]/wp_on_reg[]) and
- * only toggles the enable bit, so overwriting a slot without restoring the
- * original address/control silently kills a ptrace/perf breakpoint. */
-static DEFINE_PER_CPU(u64, g_hwb_sav_brp_a[BS_HWB_MAX_HW_SLOTS]);
-static DEFINE_PER_CPU(u64, g_hwb_sav_brp_c[BS_HWB_MAX_HW_SLOTS]);
-static DEFINE_PER_CPU(u64, g_hwb_sav_wrp_a[BS_HWB_MAX_HW_SLOTS]);
-static DEFINE_PER_CPU(u64, g_hwb_sav_wrp_c[BS_HWB_MAX_HW_SLOTS]);
-static DEFINE_PER_CPU(u32, g_hwb_sav_mask);
-static DEFINE_PER_CPU(u64, g_hwb_sav_gen);
+/* Copy of the debug slots this session displaced, one entry per CPU. The
+ * kernel's hw_breakpoint layer keeps its own bookkeeping (bp_on_reg[]/
+ * wp_on_reg[]) and only toggles the enable bit, so overwriting a slot without
+ * restoring the original address/control silently kills a ptrace/perf
+ * breakpoint. Deliberately NOT DEFINE_PER_CPU: some vendor kernels fail the
+ * whole module load with "Could not allocate N bytes percpu data" (-ENOMEM)
+ * before init runs, so this is a plain CPU-indexed array instead. */
+struct bs_hwb_sav_cpu {
+    u64 brp_a[BS_HWB_MAX_HW_SLOTS];
+    u64 brp_c[BS_HWB_MAX_HW_SLOTS];
+    u64 wrp_a[BS_HWB_MAX_HW_SLOTS];
+    u64 wrp_c[BS_HWB_MAX_HW_SLOTS];
+    u32 mask;
+    u64 gen;
+};
+
+static struct bs_hwb_sav_cpu *g_hwb_sav;
+
+/* Called with g_hwb_mutex held. */
+static int bs_hwb_sav_alloc_locked(void)
+{
+    if (g_hwb_sav)
+        return 0;
+    g_hwb_sav = kvzalloc(sizeof(*g_hwb_sav) * num_possible_cpus(),
+                         GFP_KERNEL);
+    return g_hwb_sav ? 0 : -ENOMEM;
+}
+
+static void bs_hwb_sav_free_locked(void)
+{
+    kvfree(g_hwb_sav);
+    g_hwb_sav = NULL;
+}
+
+/* Callers hold g_hwb_lock (IRQs off), so the CPU id is stable. */
+static struct bs_hwb_sav_cpu *bs_hwb_sav_current(void)
+{
+    if (!g_hwb_sav)
+        return NULL;
+    return &g_hwb_sav[smp_processor_id()];
+}
 
 static void bs_hwb_save_slots_current_cpu(void)
 {
+    struct bs_hwb_sav_cpu *sav = bs_hwb_sav_current();
     uint32_t i;
     u32 mask = 0;
 
-    if (this_cpu_read(g_hwb_sav_gen) == g_hwb.generation)
+    if (!sav || sav->gen == g_hwb.generation)
         return;
 
     for (i = 0; i < g_hwb.used_brps && i < BS_HWB_MAX_HW_SLOTS; i++) {
-        this_cpu_write(g_hwb_sav_brp_a[i],
-                       bs_hwb_read_dbg_reg(BS_HWB_DBG_BVR, (int)i));
-        this_cpu_write(g_hwb_sav_brp_c[i],
-                       bs_hwb_read_dbg_reg(BS_HWB_DBG_BCR, (int)i));
+        sav->brp_a[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_BVR, (int)i);
+        sav->brp_c[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_BCR, (int)i);
         mask |= 1U << i;
     }
     for (i = 0; i < g_hwb.used_wrps && i < BS_HWB_MAX_HW_SLOTS; i++) {
-        this_cpu_write(g_hwb_sav_wrp_a[i],
-                       bs_hwb_read_dbg_reg(BS_HWB_DBG_WVR, (int)i));
-        this_cpu_write(g_hwb_sav_wrp_c[i],
-                       bs_hwb_read_dbg_reg(BS_HWB_DBG_WCR, (int)i));
+        sav->wrp_a[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_WVR, (int)i);
+        sav->wrp_c[i] = bs_hwb_read_dbg_reg(BS_HWB_DBG_WCR, (int)i);
         mask |= 1U << (16 + i);
     }
-    this_cpu_write(g_hwb_sav_mask, mask);
-    this_cpu_write(g_hwb_sav_gen, g_hwb.generation);
+    sav->mask = mask;
+    sav->gen = g_hwb.generation;
 }
 
 static void bs_hwb_restore_slot_current_cpu(int is_exec, uint32_t slot,
                                             u64 generation)
 {
+    struct bs_hwb_sav_cpu *sav = bs_hwb_sav_current();
     u32 bit = 1U << (slot + (is_exec ? 0 : 16));
 
-    if (this_cpu_read(g_hwb_sav_gen) == generation &&
-        (this_cpu_read(g_hwb_sav_mask) & bit)) {
+    if (sav && sav->gen == generation && (sav->mask & bit)) {
         if (is_exec) {
-            bs_hwb_write_dbg_reg(BS_HWB_DBG_BVR, (int)slot,
-                                 this_cpu_read(g_hwb_sav_brp_a[slot]));
-            bs_hwb_write_dbg_reg(BS_HWB_DBG_BCR, (int)slot,
-                                 this_cpu_read(g_hwb_sav_brp_c[slot]));
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_BVR, (int)slot, sav->brp_a[slot]);
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_BCR, (int)slot, sav->brp_c[slot]);
         } else {
-            bs_hwb_write_dbg_reg(BS_HWB_DBG_WVR, (int)slot,
-                                 this_cpu_read(g_hwb_sav_wrp_a[slot]));
-            bs_hwb_write_dbg_reg(BS_HWB_DBG_WCR, (int)slot,
-                                 this_cpu_read(g_hwb_sav_wrp_c[slot]));
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_WVR, (int)slot, sav->wrp_a[slot]);
+            bs_hwb_write_dbg_reg(BS_HWB_DBG_WCR, (int)slot, sav->wrp_c[slot]);
         }
-        this_cpu_write(g_hwb_sav_mask,
-                       this_cpu_read(g_hwb_sav_mask) & ~bit);
+        sav->mask &= ~bit;
         return;
     }
     if (is_exec) {
@@ -1792,6 +1815,7 @@ static bool bs_hwb_any_hook_installed(void)
 
 static int bs_hwb_hooks_install_locked(void)
 {
+    bool took_ref = false;
     int ret;
 
     /* install_one() is idempotent, so only skip when every hook is present;
@@ -1810,6 +1834,16 @@ static int bs_hwb_hooks_install_locked(void)
         if (!try_module_get(THIS_MODULE))
             return -ENODEV;
         g_hwb.hooks_ref = 1;
+        took_ref = true;
+    }
+
+    ret = bs_hwb_sav_alloc_locked();
+    if (ret) {
+        if (took_ref) {
+            g_hwb.hooks_ref = 0;
+            module_put(THIS_MODULE);
+        }
+        return ret;
     }
 
     ret = bs_hwb_hook_install_many(g_hwb_exception_hooks,
@@ -2190,6 +2224,7 @@ void bs_hwb_exit(void)
         mutex_unlock(&g_hwb_mutex);
         return;
     }
+    bs_hwb_sav_free_locked();
     vfree(g_hwb.snapshots[0]);
     vfree(g_hwb.snapshots[1]);
     g_hwb.snapshots[0] = NULL;
