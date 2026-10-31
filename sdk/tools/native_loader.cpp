@@ -815,6 +815,20 @@ static bool loaded_module_is_ours() {
     return value == BS_EMBEDDED_MODULE_VERSION;
 }
 
+/* Diagnostic stages 1-3 return from mod_init before any fd-install entry is
+ * registered, so such a module is loaded but the control interface is absent.
+ * Read the parameter (root-only file) so the loader does not report success. */
+static int loaded_module_stage() {
+    std::FILE* file = std::fopen("/sys/module/bs/parameters/bs_stage", "r");
+    if (!file)
+        return -1;
+    int stage = -1;
+    if (std::fscanf(file, "%d", &stage) != 1)
+        stage = -1;
+    std::fclose(file);
+    return stage;
+}
+
 static int detect_kmi_index(std::string* release) {
     struct utsname info;
     if (uname(&info) != 0) {
@@ -914,6 +928,12 @@ static int load_kmi(const char* kmi, const std::string& params,
             err("已存在同名但非本驱动的模块（/sys/module/bs 版本不符）");
             return kExitFailure;
         }
+        const int stage = loaded_module_stage();
+        if (stage == 1 || stage == 2 || stage == 3) {
+            err("当前模块是以诊断阶段加载的（无控制接口）");
+            err("请先执行 --unload 再完整加载");
+            return kExitFailure;
+        }
         ok("内核模块加载成功!");
         return kExitOk;
     }
@@ -972,15 +992,24 @@ static int load_kmi(const char* kmi, const std::string& params,
 }
 
 static int unload_module() {
-    if (!is_module_loaded()) {
-        err("内核模块未加载");
-        return kExitFailure;
-    }
     info("正在卸载内核模块...");
     const long result = syscall(__NR_delete_module, "bs", kO_NONBLOCK);
     if (result != 0) {
+        const int error = errno;
+        if (error == ENOENT) {
+            err("内核模块未加载");
+            return kExitFailure;
+        }
         std::printf("%s[x] 卸载失败%s %s (%d)\n", kRed, kReset,
-                    errno_name(errno), errno);
+                    errno_name(error), error);
+        if (error == EBUSY)
+            err("提示: 仍有进程持有控制 fd 或 hwb 待还原；关闭相关进程/执行 CLEAR 后重试，或重启设备");
+        else if (error == EPERM)
+            err("提示: 需要 root 权限执行卸载");
+        return kExitFailure;
+    }
+    if (is_module_loaded()) {
+        err("卸载命令返回成功，但模块仍在 /proc/modules 中");
         return kExitFailure;
     }
     ok("内核模块已卸载");
