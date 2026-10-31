@@ -75,5 +75,5 @@
 
 | 设备 / 内核 | 结果 | 备注 |
 |---|---|---|
-| `6.6.118-android15-8-gb9cc6ec16bc8-abogki536571621-4k` | OK | 开发机，6.6 |
+| Redmi K80 Pro，`6.6.118-android15-8-gb9cc6ec16bc8-abogki536571621-4k` | OK | 开发机，6.6 |
 | OnePlus Ace 6，`6.6.118-android15-8-g93e22c376e7-abogki500782043-4k` | 需 percpu-free 构建 | 旧构建 `-ENOMEM`；去掉模块 per-CPU 后加载成功 |
