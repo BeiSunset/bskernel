@@ -217,7 +217,7 @@ static ssize_t process_mem_rw(struct file *file, char __user *buf, size_t count,
         return -E2BIG;
     if (*pos < 0 || (u64)*pos >= TASK_SIZE_64 || count > TASK_SIZE_64 - (u64)*pos)
         return -EINVAL;
-    buffer = writing ? memdup_user(buf, count) : kmalloc(count, GFP_KERNEL);
+    buffer = writing ? memdup_user(buf, count) : kvmalloc(count, GFP_KERNEL);
     if (IS_ERR(buffer))
         return PTR_ERR(buffer);
     if (!buffer)
@@ -235,7 +235,7 @@ static ssize_t process_mem_rw(struct file *file, char __user *buf, size_t count,
             *pos += ret;
     }
     mutex_unlock(&session->lock);
-    kfree(buffer);
+    kvfree(buffer);
     return ret;
 }
 

@@ -289,9 +289,8 @@ static bool touch_v2_flush_inline(struct input_dev *dev)
 
     g_touch_v2_injected_batches++;
     g_touch_v2_injected_events += n;
-    bs_info_ratelimited("injected %u events inline (batch %lu, dev=%s, ctx=%s/%d)\n",
-                        n, g_touch_v2_injected_batches, dev->name,
-                        current->comm, current->pid);
+    /* No logging here: this runs from the input_event kprobe pre_handler in the
+     * touch driver's IRQ context; the counters are enough for diagnosis. */
     return true;
 }
 

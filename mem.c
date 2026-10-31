@@ -1071,11 +1071,21 @@ static int create_linearmap(void)
  * mem_core_exit(), which the control fd's module reference keeps apart. */
 static bool ____pa_is_mapped_ram(unsigned long pa)
 {
-    unsigned long i;
+    unsigned long lo = 0;
+    unsigned long hi = __linearmap_info_cnt;
 
-    for (i = 0; i < __linearmap_info_cnt; i++) {
-        if (pa >= __linearmap_info_arr[i].phys &&
-            pa < __linearmap_info_arr[i].phys + __linearmap_info_arr[i].size)
+    /* __linearmap_info_arr[] follows memblock region order, and memblock keeps
+     * regions sorted by base, so a binary search is valid. Called once per
+     * granule from nc_memrw(); the linear scan cost 30-60 ns/granule. */
+    while (lo < hi) {
+        unsigned long mid = lo + (hi - lo) / 2;
+        unsigned long base = __linearmap_info_arr[mid].phys;
+
+        if (pa < base)
+            hi = mid;
+        else if (pa >= base + __linearmap_info_arr[mid].size)
+            lo = mid + 1;
+        else
             return true;
     }
     return false;
@@ -1419,10 +1429,11 @@ static ssize_t access_remote_vm_nc(pid_t vpid, unsigned long target, char __user
         goto out;
     }
 
-    /* Pre-touch the destination pages before taking mmap_lock: a page fault
-     * inside __copy_to_user() would take the same mmap_lock again when the
-     * target is the caller mm and can deadlock against a pending writer. */
-    if (prefault_user_write(buffer, count)) {
+    /* Pre-touch only when the target is the caller mm: only that case can
+     * recurse on the mmap_lock we are about to hold. The prefault writes a
+     * zero byte per page, so doing it for cross-process reads silently
+     * corrupts the caller buffer when the read later fails. */
+    if (mm == current->mm && prefault_user_write(buffer, count)) {
         result = -EFAULT;
         goto out;
     }
@@ -1459,8 +1470,8 @@ static ssize_t access_remote_vm_nc_cache(pid_t vpid, unsigned long target, char 
         goto out;
     }
 
-    /* See access_remote_vm_nc(): pre-touch the destination before the lock. */
-    if (prefault_user_write(buffer, count)) {
+    /* See access_remote_vm_nc(): only same-mm destinations can recurse. */
+    if (mm == current->mm && prefault_user_write(buffer, count)) {
         result = -EFAULT;
         goto out;
     }
@@ -1846,7 +1857,9 @@ long mem_read_cache(void __user *arg)
 long mem_read_batch(void __user *arg)
 {
     struct mem_batch_req req;
-    struct mem_batch_seg *segs;
+    /* 64 * 32 B = 2 KiB: fits the arm64 kernel stack and removes a
+     * kmalloc/kfree pair from every batch ioctl. */
+    struct mem_batch_seg segs[MEM_BATCH_MAX_SEGS];
     struct task_struct *task;
     struct mm_struct *mm;
     uint64_t total_bytes = 0;
@@ -1862,9 +1875,6 @@ long mem_read_batch(void __user *arg)
         return -EINVAL;
 
     segs_size = (size_t)req.count * sizeof(*segs);
-    segs = kmalloc(segs_size, GFP_KERNEL);
-    if (!segs)
-        return -ENOMEM;
     if (copy_from_user(segs, (char __user *)req.segs, segs_size)) {
         ret = -EFAULT;
         goto out_free;
@@ -1903,7 +1913,8 @@ long mem_read_batch(void __user *arg)
      * reported for that segment only; the remaining segments still proceed. */
     for (i = 0; i < req.count; i++) {
         if (!access_ok((char __user *)segs[i].buf, segs[i].len) ||
-            prefault_user_write((char __user *)segs[i].buf, segs[i].len)) {
+            (mm == current->mm &&
+             prefault_user_write((char __user *)segs[i].buf, segs[i].len))) {
             segs[i].err = -EFAULT;
             continue;
         }
@@ -1944,7 +1955,6 @@ long mem_read_batch(void __user *arg)
     ret = 0;
 
 out_free:
-    kfree(segs);
     return ret;
 }
 

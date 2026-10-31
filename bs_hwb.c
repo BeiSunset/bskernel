@@ -1788,9 +1788,24 @@ bs_hwb_finish_task_switch_return_work(
 static int bs_hwb_finish_task_switch_work(struct pt_regs *hook_regs)
 {
     struct bs_hwb_finish_return_frame *frame;
+    struct task_struct *target;
     unsigned long flags;
 
     if (!hook_regs)
+        return 0;
+
+    /* Debug registers only change on the switch that brings the target in
+     * (current == target) or takes it out (prev == target). Every other
+     * switch would otherwise build a redirect frame, take g_hwb_lock twice
+     * and scan debug registers on every CPU. regs[0]/regs[1] cover both the
+     * single-argument and (rq, prev) finish_task_switch signatures; a false
+     * positive only takes the slow path. The control plane still sweeps all
+     * CPUs in bs_hwb_set()/bs_hwb_stop_locked(). */
+    target = READ_ONCE(g_hwb.target);
+    if (!READ_ONCE(g_hwb.configured) ||
+        (current != target &&
+         (struct task_struct *)hook_regs->regs[0] != target &&
+         (struct task_struct *)hook_regs->regs[1] != target))
         return 0;
 
     frame = bs_hwb_hook_frame_metadata(hook_regs);
@@ -2058,7 +2073,7 @@ long bs_hwb_set(struct file *owner, void __user *arg)
     if (!bs_hwb_may_ptrace())
         return -EPERM;
     if (req.target_tid <= 0 || req.point_count == 0 ||
-        req.point_count > BS_HWB_MAX_POINTS)
+        req.point_count > BS_HWB_MAX_POINTS || req.reserved)
         return -EINVAL;
     {
         struct pid *pid = find_get_pid(req.target_tid);

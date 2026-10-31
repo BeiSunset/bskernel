@@ -57,7 +57,7 @@
 #define MEM_IOC_READ_BATCH _IOWR('D', 39, struct mem_batch_req)
 
 #define MEM_PROCESS_MEM_ABI_VERSION 1U
-#define MEM_PROCESS_MEM_IO_MAX 4096U
+#define MEM_PROCESS_MEM_IO_MAX 16384U
 
 /* Restricted lab session: system_server /system/lib64/libsensorservice.so only.
  * version=0 is a non-mutating capability probe, rejected with -EINVAL.

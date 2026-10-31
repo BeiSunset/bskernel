@@ -309,8 +309,10 @@ static ssize_t touch_read_proxy_impl(struct file *file, char __user *buf,
     }
 
     copy_size = (size_t)ret;
-    memset(g_touch_read_events, 0, sizeof(g_touch_read_events));
-    memset(&g_touch_final_events, 0, sizeof(g_touch_final_events));
+    /* touch_append_event() fills every field of each appended event and the
+     * read buffer is fully covered by copy_from_user() below, so only the
+     * output count needs resetting; the two 6 KiB memsets ran per read(). */
+    g_touch_final_events.count = 0;
 
     if (copy_from_user(g_touch_read_events, buf, copy_size)) {
         mutex_unlock(&g_touch_lock);

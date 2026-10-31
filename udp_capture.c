@@ -271,9 +271,14 @@ long udp_capture_init(void __user *arg)
         return -EINVAL;
     if (copy_from_user(&req, arg, sizeof(req)))
         return -EFAULT;
-    if (req.pid <= 0)
+    if (req.pid <= 0 || req.reserved0 || req.reserved1)
         return -EINVAL;
     if (req.max_payload && req.max_payload > UDP_CAP_MAX_PAYLOAD)
+        return -EINVAL;
+    /* min == 0 means the 16-byte default; an explicit min above max would make
+     * every packet fail the length check while INIT still reports success. */
+    if (req.min_payload && req.min_payload >
+        (req.max_payload ? req.max_payload : UDP_CAP_MAX_PAYLOAD))
         return -EINVAL;
 
     uid = udp_uid_from_pid(req.pid);
