@@ -312,11 +312,11 @@ static bool digest_matches(const unsigned char digest[32],
     return true;
 }
 
-static bool decode_and_verify(const embedded_module& module,
-                              std::vector<unsigned char>& raw) {
+static bool decode_module(const embedded_module& module,
+                          std::vector<unsigned char>& raw) {
     raw.clear();
     if (!module.data || module.size == 0 || module.raw_size == 0 ||
-        module.raw_size > kMaxRawModuleBytes || !module.sha256)
+        module.raw_size > kMaxRawModuleBytes)
         return false;
 
     std::vector<unsigned char> compressed(module.size);
@@ -332,14 +332,21 @@ static bool decode_and_verify(const embedded_module& module,
         raw.clear();
         return false;
     }
+    return true;
+}
 
+static bool verify_module(const embedded_module& module,
+                          const std::vector<unsigned char>& raw) {
+    if (!module.sha256)
+        return false;
     unsigned char digest[32];
     sha256_digest(raw.data(), raw.size(), digest);
-    if (!digest_matches(digest, module.sha256)) {
-        raw.clear();
-        return false;
-    }
-    return true;
+    return digest_matches(digest, module.sha256);
+}
+
+static bool decode_and_verify(const embedded_module& module,
+                              std::vector<unsigned char>& raw) {
+    return decode_module(module, raw) && verify_module(module, raw);
 }
 
 /* ---- version check ----
@@ -523,31 +530,16 @@ static int load_kmi(const char* kmi, const std::string& params,
     }
 
     std::vector<unsigned char> ko;
-    if (verify) {
-        info("正在验证内置驱动...");
-        std::vector<unsigned char> probe;
-        unsigned int verified = 0;
-        for (unsigned int i = 0; i < embedded_module_count; ++i) {
-            if (!decode_and_verify(embedded_modules[i], probe))
-                break;
-            ++verified;
-        }
-        if (verified != embedded_module_count ||
-            !decode_and_verify(*entry, ko)) {
+    if (!decode_module(*entry, ko) ||
+        (verify && !verify_module(*entry, ko))) {
+        if (verify) {
             err("驱动完整性验证失败!");
-            return kExitFailure;
+        } else {
+            err("驱动解码失败!");
         }
-        char verified_text[64];
-        std::snprintf(verified_text, sizeof(verified_text),
-                      "驱动完整性验证通过（%u/%u）", verified,
-                      embedded_module_count);
-        ok(verified_text);
-    } else if (!decode_and_verify(*entry, ko)) {
-        err("驱动解码失败!");
         return kExitFailure;
     }
 
-    info("正在加载内核模块...");
     const int error = load_module_bytes(ko.data(), ko.size(), params);
     if (error != 0) {
         std::printf("%s[x] 内核模块加载失败!%s %s (%d)\n", kRed, kReset,
@@ -596,51 +588,60 @@ static void list_modules() {
 
 static void show_menu(int detected) {
     for (size_t i = 0; i < kKmiTargetCount; ++i) {
-        std::printf("%s[%zu] 内核版本：%-6s        （一个子方案）%s%s\n",
-                    kMagenta, i + 1, kKmiTargets[i].series,
-                    int(i) == detected ? "  [推荐]" : "", kReset);
+        (void)detected;
+        std::printf("%s[%zu] 内核版本：%-6s        （一个子方案）%s\n",
+                    kMagenta, i + 1, kKmiTargets[i].series, kReset);
     }
     std::printf("%s[7] 退出程序%s\n", kMagenta, kReset);
 }
 
-static int run_menu(const std::string& release, int detected,
+static int run_menu(const std::string& /*release*/, int detected,
                     const std::string& params, bool verify) {
-    std::printf("\n%s[-] 你的当前内核版本是：%s%s\n\n", kTeal, kReset,
-                release.empty() ? "unknown" : release.c_str());
-    std::printf("%s请根据当前内核版本，从列表中选择最接近的驱动方案安装：%s\n\n",
-                kYellow, kReset);
     show_menu(detected);
 
     char line[64];
     for (;;) {
+        std::printf("\n%s请根据当前内核版本，从列表中选择最接近的驱动方案安装：%s\n\n",
+                    kYellow, kReset);
+        show_menu(detected);
         std::printf("\n[-] 请输入选项数字并回车：");
         std::fflush(stdout);
         if (!std::fgets(line, sizeof(line), stdin)) {
-            std::putchar('\n');
-            return kExitUsage;
+            err("输入已结束，程序退出");
+            return kExitFailure;
         }
         char* end = nullptr;
-        const long choice = std::strtol(line, &end, 10);
+        long choice = std::strtol(line, &end, 10);
         if (end == line) {
-            err("请输入数字");
-            continue;
+            if (detected >= 0)
+                choice = detected + 1;
+            else
+                continue;
         }
         if (choice == 7)
             return kExitOk;
         if (choice < 1 || choice > long(kKmiTargetCount)) {
-            err("无效的选项");
+            std::printf("%s[x] 无效选项：%s%s\n", kRed, kReset, line);
             continue;
         }
-        return load_kmi(kKmiTargets[size_t(choice - 1)].kmi, params, verify);
+        return load_kmi(kKmiTargets[size_t(choice - 1)].kmi, params,
+                        verify);
     }
 }
 
 static int run_auto(const std::string& release, int detected,
                     const std::string& params, bool verify) {
     if (detected < 0) {
-        std::printf("%s[x] 不支持的内核版本：%s%s\n", kRed, kReset,
-                    release.empty() ? "unknown" : release.c_str());
-        print_supported();
+        std::printf("%s[x] 自动模式：当前内核 %s 不在支持列表"
+                    "（5.10/5.15/6.1/6.6/6.12/6.18）%s\n",
+                    kRed, release.empty() ? "unknown" : release.c_str(),
+                    kReset);
+        return kExitFailure;
+    }
+    const embedded_module* entry = find_module(kKmiTargets[detected].kmi);
+    if (!entry) {
+        std::printf("%s[x] 自动模式：未找到 %s 的驱动模块%s\n", kRed,
+                    kKmiTargets[detected].series, kReset);
         return kExitFailure;
     }
     return load_kmi(kKmiTargets[detected].kmi, params, verify);
@@ -776,9 +777,39 @@ int main(int argc, char** argv) {
         return load_kmi(kmi.c_str(), params, verify);
 
     banner();
-    if (detected < 0 || auto_mode || !isatty(STDIN_FILENO) ||
-        !isatty(STDOUT_FILENO)) {
-        return run_auto(release, detected, params, verify);
+
+    bool pre_verified = false;
+    if (verify) {
+        info("正在验证内置驱动...");
+        std::vector<unsigned char> probe;
+        unsigned int verified = 0;
+        for (unsigned int i = 0; i < embedded_module_count; ++i) {
+            if (!decode_and_verify(embedded_modules[i], probe))
+                break;
+            ++verified;
+        }
+        if (verified != embedded_module_count) {
+            err("驱动完整性验证失败!");
+            return kExitFailure;
+        }
+        char verified_text[64];
+        std::snprintf(verified_text, sizeof(verified_text),
+                      "驱动完整性验证通过（%u/%u）", verified,
+                      embedded_module_count);
+        ok(verified_text);
+        pre_verified = true;
     }
-    return run_menu(release, detected, params, verify);
+
+    info("正在向服务器验证驱动版本请稍后...");
+    if (!check_version())
+        return kExitFailure;
+
+    std::printf("\n%s[-] 你的当前内核版本是：%s%s\n\n", kTeal, kReset,
+                release.empty() ? "unknown" : release.c_str());
+
+    if (auto_mode || detected < 0 || !isatty(STDIN_FILENO) ||
+        !isatty(STDOUT_FILENO)) {
+        return run_auto(release, detected, params, verify && !pre_verified);
+    }
+    return run_menu(release, detected, params, verify && !pre_verified);
 }
