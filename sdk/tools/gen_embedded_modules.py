@@ -34,7 +34,13 @@ for kmi, series in KMIS:
         sys.exit("%s is not an ELF file" % path)
     digest = hashlib.sha256(raw).hexdigest()
     version = None
-    marker = raw.find(b"version=")
+    marker = raw.find(b"\x00version=")
+    if marker >= 0:
+        marker += 1
+    elif raw.startswith(b"version="):
+        marker = 0
+    else:
+        marker = -1
     if marker >= 0:
         end = raw.find(b"\x00", marker)
         if end < 0:
