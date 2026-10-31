@@ -122,6 +122,11 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     }
 }
 
+/* Control fds are handed out per magic reboot() call; the capture/touch
+ * engines behind them are process-global singletons, so tear them down only
+ * when the last control fd closes instead of on the first one. */
+static atomic_t g_drv_fds = ATOMIC_INIT(0);
+
 static int drv_release(struct inode *inode, struct file *filp)
 {
     /* Per-owner state dies with this fd; the capture/touch engines are
@@ -145,10 +150,6 @@ static const struct file_operations drv_fops = {
 };
 
 static int g_reboot_kprobe_registered;
-/* Control fds are handed out per magic reboot() call; the capture/touch
- * engines behind them are process-global singletons, so tear them down only
- * when the last control fd closes instead of on the first one. */
-static atomic_t g_drv_fds = ATOMIC_INIT(0);
 
 /* ---- fd installation ---- */
 
