@@ -68,7 +68,7 @@ jobs:
               # data, which vendor kernels (OnePlus) reject before init:
               #   "bs: Could not allocate N bytes percpu data" -> -ENOMEM.
               percpu_idx=$(llvm-readelf -S --wide bs.ko | sed -n "s/^ *\[ *\\([0-9][0-9]*\\)\\] \\.data\\.\\.percpu .*/\\1/p" | head -n1)
-              bad_percpu=$(llvm-readelf -s --wide bs.ko | awk -v idx="$percpu_idx" "\$7==idx {print \$8}" | grep -vE "(_alloc_tag_cntr$|^\\\$d\\.|^$)" || true)
+              bad_percpu=$(llvm-readelf -s --wide bs.ko | awk -v idx="$percpu_idx" "\$7==idx {print \$8}" | grep -vE "(_alloc_tag_cntr|^\\\$d\\.|^$|\\.percpu$)" || true)
               if [ -n "$bad_percpu" ]; then
                 echo "::error::bs.ko has user per-CPU data (vendor kernels reject it before init):"
                 echo "$bad_percpu"
