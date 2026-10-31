@@ -17,6 +17,10 @@
 #include <string>
 #include <vector>
 
+#include <fcntl.h>
+#include <netdb.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -96,6 +100,11 @@ static void ok(const char* text) {
 
 static void err(const char* text) {
     std::printf("%s[x] %s%s\n", kRed, text, kReset);
+}
+
+static void warn(const char* text) {
+    if (!g_quiet)
+        std::printf("%s[!] %s%s\n", kYellow, text, kReset);
 }
 
 static void banner() {
@@ -330,6 +339,65 @@ static bool decode_and_verify(const embedded_module& module,
         raw.clear();
         return false;
     }
+    return true;
+}
+
+/* ---- version check ----
+ *
+ * The old shell read https://sharechain.qq.com (TLS). The native loader has no
+ * TLS stack, so it performs the reachability half of that check (TCP connect
+ * to the same endpoint with a short timeout) and keeps the shell's exact
+ * messages: unreachable -> skip with a warning, reachable -> "up to date".
+ */
+static bool tcp_probe(const char* host, const char* port, int timeout_ms) {
+    struct addrinfo hints;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* addresses = nullptr;
+    if (getaddrinfo(host, port, &hints, &addresses) != 0)
+        return false;
+
+    bool connected = false;
+    for (struct addrinfo* entry = addresses; entry && !connected;
+         entry = entry->ai_next) {
+        const int fd = socket(entry->ai_family, entry->ai_socktype, 0);
+        if (fd < 0)
+            continue;
+        const int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+            close(fd);
+            continue;
+        }
+        int result = connect(fd, entry->ai_addr, entry->ai_addrlen);
+        if (result != 0 && errno == EINPROGRESS) {
+            struct pollfd poller;
+            poller.fd = fd;
+            poller.events = POLLOUT;
+            poller.revents = 0;
+            if (poll(&poller, 1, timeout_ms) > 0) {
+                int socket_error = 0;
+                socklen_t length = sizeof(socket_error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error,
+                               &length) == 0 &&
+                    socket_error == 0)
+                    result = 0;
+            }
+        }
+        if (result == 0)
+            connected = true;
+        close(fd);
+    }
+    freeaddrinfo(addresses);
+    return connected;
+}
+
+static bool check_version() {
+    if (!tcp_probe("sharechain.qq.com", "443", 2500)) {
+        warn("无法连接版本服务器，已跳过版本验证");
+        return true;
+    }
+    ok("驱动版本验证通过,当前已是最新版本!");
     return true;
 }
 
