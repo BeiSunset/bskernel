@@ -186,7 +186,6 @@ int install_fd_to_user(int __user *outp)
 
     fd = install_fd();
     if (copy_to_user(outp, &fd, sizeof(fd))) {
-        pr_err("install fd copy_to_user failed\n");
         if (fd >= 0) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,11, 0)
             close_fd(fd);
@@ -301,8 +300,6 @@ static int bs_stage = BS_STAGE_NO_SYSCALL;
 module_param(bs_stage, int, 0);
 int bs_log_verbose;
 module_param(bs_log_verbose, int, 0);
-MODULE_PARM_DESC(bs_log_verbose, "0=quiet (default), 1=verbose kernel log");
-MODULE_PARM_DESC(bs_stage, "0=full, 1=compat, 2=+mem, 3=+file_io, 4=syscall-only, 5=reboot-only, 6=full-skip-syscall (default)");
 static bool g_mem_inited;
 static bool g_file_inited;
 
