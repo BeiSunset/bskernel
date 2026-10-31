@@ -59,8 +59,8 @@
 #endif
 
 static constexpr long kO_NONBLOCK = 0x800;
-static constexpr const char* kVersion = "1.0.5";
-static constexpr const char* kVersionFull = "1.0.5";
+static constexpr const char* kVersion = "1.0.6";
+static constexpr const char* kVersionFull = "1.0.6";
 static constexpr const char* kTgUrl = "https://t.me/BAIFRE";
 static constexpr unsigned int kMaxRawModuleBytes = 256u * 1024u * 1024u;
 
@@ -402,7 +402,11 @@ static int tcp_connect_timeout(const char* host, const char* port,
             poller.fd = fd;
             poller.events = POLLOUT;
             poller.revents = 0;
-            if (poll(&poller, 1, timeout_ms) > 0) {
+            int poll_result;
+            do {
+                poll_result = poll(&poller, 1, timeout_ms);
+            } while (poll_result < 0 && errno == EINTR);
+            if (poll_result > 0) {
                 int socket_error = 0;
                 socklen_t length = sizeof(socket_error);
                 if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error,
@@ -521,11 +525,13 @@ static bool https_get(const char* host, const char* path, std::string* body) {
             goto out;
     }
 
-    std::snprintf(request, sizeof(request),
-                  "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: bsloader/%s\r\n"
-                  "Accept: */*\r\nAccept-Encoding: identity\r\n"
-                  "Connection: close\r\n\r\n",
-                  path, host, kVersionFull);
+    if (std::snprintf(request, sizeof(request),
+                      "GET %s HTTP/1.1\r\nHost: %s\r\n"
+                      "User-Agent: bsloader/%s\r\nAccept: */*\r\n"
+                      "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
+                      path, host, kVersionFull) >= int(sizeof(request))) {
+        goto out;
+    }
     {
         const size_t request_len = std::strlen(request);
         size_t sent = 0;
@@ -637,22 +643,45 @@ static bool extract_html_content(const std::string& page, std::string* out) {
     return true;
 }
 
-static bool valid_version(const std::string& text) {
-    if (text.empty())
+/* Strict "major[.minor[.patch]]" parse: digits only, no empty/overlong parts. */
+static bool parse_version(const std::string& text, int out[3]) {
+    if (text.empty() || text.size() > 32)
         return false;
-    for (char value : text) {
-        if (!(value >= '0' && value <= '9') && value != '.')
+    out[0] = out[1] = out[2] = 0;
+    size_t pos = 0;
+    for (int index = 0; index < 3; ++index) {
+        if (pos >= text.size())
             return false;
+        size_t end = text.find('.', pos);
+        const bool last = end == std::string::npos;
+        if (last)
+            end = text.size();
+        if (end == pos || end - pos > 9)
+            return false;
+        for (size_t i = pos; i < end; ++i) {
+            if (text[i] < '0' || text[i] > '9')
+                return false;
+        }
+        out[index] = int(std::strtol(text.substr(pos, end - pos).c_str(),
+                                     nullptr, 10));
+        if (last)
+            return true;
+        pos = end + 1;
     }
     return true;
+}
+
+static bool valid_version(const std::string& text) {
+    int parsed[3];
+    return parse_version(text, parsed);
 }
 
 /* >0 when right is newer than left. */
 static int compare_version(const std::string& left, const std::string& right) {
     int l[3] = {0, 0, 0};
     int r[3] = {0, 0, 0};
-    std::sscanf(left.c_str(), "%d.%d.%d", &l[0], &l[1], &l[2]);
-    std::sscanf(right.c_str(), "%d.%d.%d", &r[0], &r[1], &r[2]);
+    if (!parse_version(left, l) || !parse_version(right, r))
+        return 0;
     for (int i = 0; i < 3; ++i) {
         if (r[i] != l[i])
             return r[i] - l[i];
@@ -934,6 +963,7 @@ static void usage(std::FILE* stream, const char* program) {
         "  %s                     交互式选择内核版本并加载\n"
         "  %s --auto              自动按当前内核选择最接近的方案并加载\n"
         "  %s --list              列出内置的驱动模块\n"
+        "  %s --kmi NAME          直接加载指定 KMI（如 android15-6.6）\n"
         "  %s --stage N           分阶段诊断（0=完整 1=仅兼容层 2=+内存 3=+文件 4=+hooks）\n"
         "  %s --verbose           开启内核详细日志（默认静默，仅调试用）\n"
         "  %s --unload            卸载已加载的模块\n"
@@ -941,9 +971,11 @@ static void usage(std::FILE* stream, const char* program) {
         "\n"
         "说明: 6 个内核版本的驱动已内嵌在本可执行文件里，加载时直接以\n"
         "memfd + finit_module 注入内核，不会在磁盘上释放任何 .ko 文件。\n"
-        "需要 root 权限；本程序不依赖 shell 与 toybox 命令。\n",
+        "需要 root 权限；本程序是 ELF 可执行文件，直接运行（不要用 sh）。\n"
+        "例如: su -c /data/local/tmp/BSLoaderDriver.sh --auto\n"
+        "退出码: 0 成功, 1 加载失败, 2 用法错误, 3 非 root\n",
         kVersion, program, program, program, program, program, program,
-        program);
+        program, program, program);
 }
 
 static int require_root() {
@@ -1028,6 +1060,10 @@ int main(int argc, char** argv) {
 
     if (!kmi.empty() && (auto_mode || list_only))
         auto_mode = false;
+    if (unload && (!kmi.empty() || !stage.empty() || verbose || auto_mode)) {
+        err("--unload 不能与加载参数同时使用");
+        return kExitUsage;
+    }
 
     if (list_only) {
         list_modules();

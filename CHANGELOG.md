@@ -6,7 +6,7 @@ Releases follow the enkernel scheme: the name is a UTC timestamp
 `YYYY-MM-DD-HHMMSS-<run_id>-<attempt>`. `BS_MODULE_VERSION` in `bs_module.h`
 and the loader's `VERSION` / `CURRENT_VERSION` only describe the build.
 
-## v1.0.5
+## v1.0.6
 
 - Native `BSLoaderDriver.sh` loader (AArch64 ELF): embedded modules are
   zlib-compressed and XOR-obfuscated, loaded through `memfd` + `finit_module`

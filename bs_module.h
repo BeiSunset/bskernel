@@ -8,7 +8,7 @@
  * translation unit without pulling in unnecessary dependencies.
  */
 
-#define BS_MODULE_VERSION "1.0.5"
+#define BS_MODULE_VERSION "1.0.6"
 
 enum bs_stage_mode {
 	BS_STAGE_FULL = 0,	/* syscall hook + reboot kprobe */

@@ -31,6 +31,13 @@ for kmi, series in KMIS:
         raw = handle.read()
     if not raw.startswith(b"\x7fELF"):
         sys.exit("%s is not an ELF file" % path)
+    digest = hashlib.sha256(raw).hexdigest()
+    sidecar = path + ".sha256"
+    if os.path.exists(sidecar):
+        with open(sidecar, "r", encoding="utf-8") as handle:
+            declared = handle.read().split()[0].strip().lower()
+        if declared != digest:
+            sys.exit("%s does not match its .sha256 sidecar" % path)
     comp = zlib.compress(raw, 9)
     key = xor_key(kmi)
     enc = bytes(b ^ key for b in comp)
