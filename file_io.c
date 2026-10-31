@@ -346,7 +346,10 @@ int bs_file_io_init(void)
     if (ret) {
         pr_err("failed to set file I/O context %s: %d\n", secctx, ret);
         put_cred(cred);
-        return ret;
+        /* Do not fail module load: the context domains below only exist on
+         * KernelSU/Magisk/su ROMs. Keep file I/O disabled (g_file_cred stays
+         * NULL, its ioctls return -ENODEV) and let everything else load. */
+        return 0;
     }
 
     g_file_cred = cred;
