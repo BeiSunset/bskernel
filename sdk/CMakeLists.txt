@@ -48,7 +48,7 @@ endif()
 
 # Self-contained loader: all six modules are embedded (zlib + XOR) at build
 # time, loaded through memfd + finit_module so no .ko ever touches the disk.
-option(BSKERNEL_BUILD_NATIVE_LOADER "Build the self-contained BSLoADERDriver" OFF)
+option(BSKERNEL_BUILD_NATIVE_LOADER "Build the self-contained DFMLoaderDriver" OFF)
 set(BSKERNEL_EMBEDDED_HEADER "" CACHE STRING "Directory holding dfm_native_modules.h")
 if(BSKERNEL_BUILD_NATIVE_LOADER)
     add_executable(DFMLoaderDriver tools/native_loader.cpp)

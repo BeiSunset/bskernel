@@ -189,7 +189,7 @@ jobs:
           git -C third_party/mbedtls submodule update --init --depth 1
           git -C third_party/mbedtls rev-parse HEAD
 
-      - name: Build BSLoADERDriver with the NDK
+      - name: Build DFMLoaderDriver with the NDK
         run: |
           set -euo pipefail
           cmake -S sdk -B build/native -G Ninja \

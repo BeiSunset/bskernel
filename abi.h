@@ -187,7 +187,7 @@ struct mem_query_signal_req {
 #define DFM_HWB_SLOT_F_ENABLED  (1U << 2)
 #define DFM_HWB_SLOT_F_PERF     (1U << 3)
 #define DFM_HWB_SLOT_F_PTRACE   (1U << 4)
-#define DFM_HWB_SLOT_F_BS      (1U << 5)
+#define DFM_HWB_SLOT_F_DFM      (1U << 5)
 
 #define DFM_HWB_EVENT_F_ENABLED   (1U << 0)
 #define DFM_HWB_EVENT_F_ACTIVE    (1U << 1)

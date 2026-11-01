@@ -1171,7 +1171,7 @@ static void dfm_hwb_mark_local_slots_locked(struct dfm_hwb_slots_req *req)
 
         if ((slot->flags & DFM_HWB_SLOT_F_OCCUPIED) &&
             slot->addr == addr && slot->ctrl == (ctrl | 0x1ULL))
-            slot->flags |= DFM_HWB_SLOT_F_BS;
+            slot->flags |= DFM_HWB_SLOT_F_DFM;
     }
 }
 
