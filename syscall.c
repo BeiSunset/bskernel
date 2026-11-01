@@ -15,6 +15,7 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/ptrace.h>
+#include <linux/rcupdate.h>
 #include <linux/sched.h>
 #include <linux/stop_machine.h>
 #include <linux/string.h>
