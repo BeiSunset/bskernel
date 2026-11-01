@@ -1,7 +1,7 @@
-#include <bs/loader.h>
+#include <dfm/loader.h>
 #include "loader_elf.h"
 
-#include <bs/driver.h>
+#include <dfm/driver.h>
 #include "log.h"
 
 #include <fcntl.h>
@@ -264,7 +264,7 @@ bool load_image(std::string image, std::string_view params)
 
     // EEXIST alone is not success: an incompatible/other module may own the name.
     for (int attempt = 0; attempt < 10; ++attempt) {
-        if (bs::init()) {
+        if (dfm::init()) {
             LOGI("loader: BS module loaded and verified");
             return true;
         }
@@ -282,12 +282,12 @@ namespace loader {
 const char* module_filename(std::string_view release) {
     struct Module { const char* version; const char* filename; };
     static constexpr Module modules[] = {
-        {"6.18", "bs-android17-6.18.ko"},
-        {"6.12", "bs-android16-6.12.ko"},
-        {"6.6", "bs-android15-6.6.ko"},
-        {"6.1", "bs-android14-6.1.ko"},
-        {"5.15", "bs-android13-5.15.ko"},
-        {"5.10", "bs-android12-5.10.ko"},
+        {"6.18", "dfm-android17-6.18.ko"},
+        {"6.12", "dfm-android16-6.12.ko"},
+        {"6.6", "dfm-android15-6.6.ko"},
+        {"6.1", "dfm-android14-6.1.ko"},
+        {"5.15", "dfm-android13-5.15.ko"},
+        {"5.10", "dfm-android12-5.10.ko"},
     };
     for (const auto& module : modules) {
         if (release_matches(release, module.version))

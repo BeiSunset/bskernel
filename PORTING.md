@@ -9,7 +9,7 @@
 
 - 禁止：`DEFINE_PER_CPU`、`this_cpu_*`、`per_cpu()`、`alloc_percpu()`。
 - 真实事故（2026-10-31，v1.0.6 构建）：
-  - `bs_hwb.c` 用 `DEFINE_PER_CPU` 保存被内核占用的调试槽位（536 B）；
+  - `dfm_hwb.c` 用 `DEFINE_PER_CPU` 保存被内核占用的调试槽位（536 B）；
   - `udp_capture.c` 用 per-CPU scratch 指针（8 B）。
   - 一加 Ace 6（`6.6.118-android15-8-g93e22c376e7-abogki500782043-4k`）加载时报：
     `bs: Could not allocate 536 bytes percpu data`
@@ -22,12 +22,12 @@
   - 允许 `*_alloc_tag_cntr`（6.12 内核 `CONFIG_MEM_ALLOC_PROFILING` 自动生成的分配统计计数器）
     和 `$d.*` 零长占位符；
   - 出现其它任何符号即判定为"代码里写了 per-CPU 变量"，直接构建失败。
-- 手工复查：`llvm-readelf -S bs.ko | grep -E '\.percpu'`；
-  再用 `llvm-readelf -s bs.ko` 看该段内的符号名。
+- 手工复查：`llvm-readelf -S dfm.ko | grep -E '\.percpu'`；
+  再用 `llvm-readelf -s dfm.ko` 看该段内的符号名。
 
 ### 2. 日志策略
 
-- 信息类日志在发布构建中编译为空（`bs_info`/`bs_warn` 展开为 no-op），只保留 `pr_err`。
+- 信息类日志在发布构建中编译为空（`dfm_info`/`dfm_warn` 展开为 no-op），只保留 `pr_err`。
 - 但**加载/初始化失败必须有 `pr_err`**，否则远程排障只能靠用户在群里截图猜。
 - 现象判断：如果 `dmesg` 里完全没有模块输出，说明失败发生在模块 init 之前
   （模块装载阶段），优先怀疑 per-CPU、签名、vermagic、模块内存。

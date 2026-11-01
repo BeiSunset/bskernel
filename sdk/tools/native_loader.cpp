@@ -2,7 +2,7 @@
  * BSLoADERDriver - self-contained native loader for the bs kernel module.
  *
  * The six per-KMI module images are embedded at build time
- * (bs_native_modules.h) as zlib-compressed, XOR-obfuscated blobs. They are
+ * (dfm_native_modules.h) as zlib-compressed, XOR-obfuscated blobs. They are
  * decoded and SHA-256 verified in memory and loaded with memfd_create() +
  * finit_module(), so no .ko file is ever written to the filesystem and no
  * shell or insmod is involved. The menu, banner and status flow mirror the old
@@ -42,9 +42,9 @@
 #include <mbedtls/x509_crt.h>
 
 #if defined(BSKERNEL_EMBEDDED_MODULES)
-#include "bs_native_modules.h"
+#include "dfm_native_modules.h"
 #else
-#error "bs_native_modules.h is required"
+#error "dfm_native_modules.h is required"
 #endif
 
 #ifndef __NR_memfd_create
@@ -823,14 +823,14 @@ static bool loaded_module_is_ours() {
     std::string value(line);
     while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
         value.pop_back();
-    return value == BS_EMBEDDED_MODULE_VERSION;
+    return value == DFM_EMBEDDED_MODULE_VERSION;
 }
 
 /* Diagnostic stages 1-3 return from mod_init before any fd-install entry is
  * registered, so such a module is loaded but the control interface is absent.
  * Read the parameter (root-only file) so the loader does not report success. */
 static int loaded_module_stage() {
-    std::FILE* file = std::fopen("/sys/module/dfm/parameters/bs_stage", "r");
+    std::FILE* file = std::fopen("/sys/module/dfm/parameters/dfm_stage", "r");
     if (!file)
         return -1;
     int stage = -1;
@@ -1139,7 +1139,7 @@ static void usage(std::FILE* stream, const char* program) {
         "说明: 6 个内核版本的驱动已内嵌在本可执行文件里，加载时直接以\n"
         "memfd + finit_module 注入内核，不会在磁盘上释放任何 .ko 文件。\n"
         "需要 root 权限；本程序是 ELF 可执行文件，直接运行（不要用 sh）。\n"
-        "例如: su -c /data/local/tmp/BSLoaderDriver.sh --auto\n"
+        "例如: su -c /data/local/tmp/DFMLoaderDriver.sh --auto\n"
         "退出码: 0 成功, 1 加载失败, 2 用法错误, 3 非 root\n",
         kVersion, program, program, program, program, program, program,
         program, program, program);
@@ -1242,7 +1242,7 @@ int main(int argc, char** argv) {
 
     std::string params;
     if (!stage.empty()) {
-        params = "p=" + stage;
+        params = "dfm_stage=" + stage;
     }
 
 

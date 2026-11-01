@@ -10,7 +10,7 @@
 #endif
 
 /* Magic numbers for hidden install entry to install fd */
-#define INSTALL_MAGIC1  0x44464D50  /* "BSP" */
+#define INSTALL_MAGIC1  0x44464D50  /* "DFMP" */
 #define INSTALL_MAGIC2  0x504D4644  /* "PMFD" */
 
 /* IOCTL command definitions */
@@ -25,17 +25,17 @@
 #define TOUCH_IOC_GET_STATUS     _IOR('D', 10, struct touch_status)
 #define MEM_IOC_EXECUTE_PACGA    _IOWR('D', 12, struct mem_execute_pacga_req)
 #define MEM_IOC_GET_MODULE_PATH  _IOWR('D', 13, struct mem_get_module_path_req)
-#define BS_IOCTL_HWB_INFO       _IOWR('D', 14, struct bs_hwb_info_req)
-#define BS_IOCTL_HWB_SET        _IOW('D', 15, struct bs_hwb_set_req)
-#define BS_IOCTL_HWB_READ       _IOWR('D', 16, struct bs_hwb_read_req)
-#define BS_IOCTL_HWB_CLEAR      _IO('D', 17)
-#define BS_IOCTL_HWB_SLOTS      _IOWR('D', 22, struct bs_hwb_slots_req)
+#define DFM_IOCTL_HWB_INFO       _IOWR('D', 14, struct dfm_hwb_info_req)
+#define DFM_IOCTL_HWB_SET        _IOW('D', 15, struct dfm_hwb_set_req)
+#define DFM_IOCTL_HWB_READ       _IOWR('D', 16, struct dfm_hwb_read_req)
+#define DFM_IOCTL_HWB_CLEAR      _IO('D', 17)
+#define DFM_IOCTL_HWB_SLOTS      _IOWR('D', 22, struct dfm_hwb_slots_req)
 #define MEM_IOC_GET_THREAD_STACK _IOWR('D', 18, struct mem_get_thread_stack_req)
 #define MEM_IOC_GET_PIDS         _IOWR('D', 19, struct mem_get_pids_req)
 #define TOUCH_IOC_INIT_V2        _IO('D', 20)
 #define TOUCH_IOC_EVENT_V2       _IOW('D', 21, struct touch_event_req)
-#define BS_IOCTL_KGSL_SYNCSOURCE_PEEK \
-    _IOWR('D', 23, struct bs_kgsl_syncsource_peek_req)
+#define DFM_IOCTL_KGSL_SYNCSOURCE_PEEK \
+    _IOWR('D', 23, struct dfm_kgsl_syncsource_peek_req)
 #define MEM_IOC_GET_MODULE_BASE2 _IOWR('D', 24, struct mem_get_module_base2_req)
 #define MEM_IOC_GET_THREAD_TIDS  _IOWR('D', 25, struct mem_get_thread_tids_req)
 #define UDP_IOC_INIT             _IOW('D', 26, struct udp_cap_init_req)
@@ -44,11 +44,11 @@
 #define MEM_IOC_QUERY_MAPPING    _IOWR('D', 29, struct mem_query_mapping_req)
 #define MEM_IOC_QUERY_ACCESS     _IOWR('D', 30, struct mem_query_access_req)
 #define MEM_IOC_QUERY_SIGNAL     _IOWR('D', 31, struct mem_query_signal_req)
-#define BS_FILE_IOC_READ        _IOWR('D', 32, struct bs_file_io_req)
-#define BS_FILE_IOC_WRITE       _IOWR('D', 33, struct bs_file_io_req)
-#define BS_CRED_IOC_ACQUIRE_SF_GROUPS \
-    _IOWR('D', 34, struct bs_sf_groups_req)
-#define BS_IOCTL_KGSL_QUERY _IOWR('D', 35, struct bs_kgsl_query_req)
+#define DFM_FILE_IOC_READ        _IOWR('D', 32, struct dfm_file_io_req)
+#define DFM_FILE_IOC_WRITE       _IOWR('D', 33, struct dfm_file_io_req)
+#define DFM_CRED_IOC_ACQUIRE_SF_GROUPS \
+    _IOWR('D', 34, struct dfm_sf_groups_req)
+#define DFM_IOCTL_KGSL_QUERY _IOWR('D', 35, struct dfm_kgsl_query_req)
 #define MEM_IOC_OPEN_PROCESS_MEM _IOWR('D', 36, struct mem_open_process_mem_req)
 /* This command is accepted only by the returned process-memory fd. */
 #define MEM_PROCESS_MEM_IOC_ARM _IOW('D', 37, struct mem_process_mem_arm_req)
@@ -87,14 +87,14 @@ struct mem_process_mem_arm_req {
     uint64_t delta_addr;
 };
 
-#define BS_FILE_PATH_MAX    256U
-#define BS_FILE_IO_MAX      (4U * 1024U * 1024U)
-#define BS_FILE_WRITE_CREATE   (1U << 0)
-#define BS_FILE_WRITE_TRUNCATE (1U << 1)
-#define BS_SF_GROUPS_ABI_VERSION 1U
-#define BS_SF_GROUP_INPUT        (1U << 0)
-#define BS_SF_GROUP_INET         (1U << 1)
-#define BS_SF_GROUP_REQUIRED     (BS_SF_GROUP_INPUT | BS_SF_GROUP_INET)
+#define DFM_FILE_PATH_MAX    256U
+#define DFM_FILE_IO_MAX      (4U * 1024U * 1024U)
+#define DFM_FILE_WRITE_CREATE   (1U << 0)
+#define DFM_FILE_WRITE_TRUNCATE (1U << 1)
+#define DFM_SF_GROUPS_ABI_VERSION 1U
+#define DFM_SF_GROUP_INPUT        (1U << 0)
+#define DFM_SF_GROUP_INET         (1U << 1)
+#define DFM_SF_GROUP_REQUIRED     (DFM_SF_GROUP_INPUT | DFM_SF_GROUP_INET)
 
 #define MEM_MAPPING_F_READ       (1U << 0)
 #define MEM_MAPPING_F_WRITE      (1U << 1)
@@ -156,47 +156,47 @@ struct mem_query_signal_req {
     int32_t out_tgid;
 };
 
-#define BS_HWB_MAX_POINTS  16U
-#define BS_HWB_MAX_RECORDS 64U
+#define DFM_HWB_MAX_POINTS  16U
+#define DFM_HWB_MAX_RECORDS 64U
 #define MEM_GET_PIDS_MAX     64U
 #define MEM_GET_THREAD_TIDS_MAX 64U
 #define MEM_THREAD_TID_F_ON_CPU  (1U << 0)
 #define MEM_THREAD_TID_F_RUNNING (1U << 1)
 
-#define BS_KGSL_SYNCSOURCE_PEEK_ABI_VERSION 1U
-#define BS_KGSL_SYNCSOURCE_BACKEND_IDR_RCU  1U
+#define DFM_KGSL_SYNCSOURCE_PEEK_ABI_VERSION 1U
+#define DFM_KGSL_SYNCSOURCE_BACKEND_IDR_RCU  1U
 
-#define BS_HWB_TYPE_R  1U
-#define BS_HWB_TYPE_W  2U
-#define BS_HWB_TYPE_RW (BS_HWB_TYPE_R | BS_HWB_TYPE_W)
-#define BS_HWB_TYPE_X  4U
+#define DFM_HWB_TYPE_R  1U
+#define DFM_HWB_TYPE_W  2U
+#define DFM_HWB_TYPE_RW (DFM_HWB_TYPE_R | DFM_HWB_TYPE_W)
+#define DFM_HWB_TYPE_X  4U
 
-#define BS_HWB_SNAPSHOT_ACTIVE         (1U << 0)
-#define BS_HWB_SNAPSHOT_TARGET_MISSING (1U << 1)
+#define DFM_HWB_SNAPSHOT_ACTIVE         (1U << 0)
+#define DFM_HWB_SNAPSHOT_TARGET_MISSING (1U << 1)
 
-#define BS_HWB_MAX_HW_SLOTS 16U
-#define BS_HWB_MAX_SLOT_EVENTS (BS_HWB_MAX_HW_SLOTS * 2U)
+#define DFM_HWB_MAX_HW_SLOTS 16U
+#define DFM_HWB_MAX_SLOT_EVENTS (DFM_HWB_MAX_HW_SLOTS * 2U)
 
-#define BS_HWB_SLOTS_F_PERF_CONTEXT   (1U << 0)
-#define BS_HWB_SLOTS_F_REGS_VALID     (1U << 1)
-#define BS_HWB_SLOTS_F_TARGET_RUNNING (1U << 2)
-#define BS_HWB_SLOTS_F_TRUNCATED      (1U << 3)
+#define DFM_HWB_SLOTS_F_PERF_CONTEXT   (1U << 0)
+#define DFM_HWB_SLOTS_F_REGS_VALID     (1U << 1)
+#define DFM_HWB_SLOTS_F_TARGET_RUNNING (1U << 2)
+#define DFM_HWB_SLOTS_F_TRUNCATED      (1U << 3)
 
-#define BS_HWB_SLOT_F_VALID    (1U << 0)
-#define BS_HWB_SLOT_F_OCCUPIED (1U << 1)
-#define BS_HWB_SLOT_F_ENABLED  (1U << 2)
-#define BS_HWB_SLOT_F_PERF     (1U << 3)
-#define BS_HWB_SLOT_F_PTRACE   (1U << 4)
-#define BS_HWB_SLOT_F_BS      (1U << 5)
+#define DFM_HWB_SLOT_F_VALID    (1U << 0)
+#define DFM_HWB_SLOT_F_OCCUPIED (1U << 1)
+#define DFM_HWB_SLOT_F_ENABLED  (1U << 2)
+#define DFM_HWB_SLOT_F_PERF     (1U << 3)
+#define DFM_HWB_SLOT_F_PTRACE   (1U << 4)
+#define DFM_HWB_SLOT_F_BS      (1U << 5)
 
-#define BS_HWB_EVENT_F_ENABLED   (1U << 0)
-#define BS_HWB_EVENT_F_ACTIVE    (1U << 1)
-#define BS_HWB_EVENT_F_PINNED    (1U << 2)
-#define BS_HWB_EVENT_F_EXCLUSIVE (1U << 3)
-#define BS_HWB_EVENT_F_PTRACE    (1U << 4)
-#define BS_HWB_EVENT_F_INHERITED (1U << 5)
+#define DFM_HWB_EVENT_F_ENABLED   (1U << 0)
+#define DFM_HWB_EVENT_F_ACTIVE    (1U << 1)
+#define DFM_HWB_EVENT_F_PINNED    (1U << 2)
+#define DFM_HWB_EVENT_F_EXCLUSIVE (1U << 3)
+#define DFM_HWB_EVENT_F_PTRACE    (1U << 4)
+#define DFM_HWB_EVENT_F_INHERITED (1U << 5)
 
-#define BS_HWB_SLOT_NONE 0xFFFFFFFFU
+#define DFM_HWB_SLOT_NONE 0xFFFFFFFFU
 
 struct mem_get_pid_req {
     char name[256];
@@ -369,7 +369,7 @@ struct mem_execute_pacga_req {
  * The query never calls a KGSL ioctl and never inserts/removes an ID.  It
  * observes the caller-owned kgsl_fd's process-private syncsource IDR under RCU
  * and returns the lowest free ID >= min_id. This legacy command accepts only
- * a caller-owned fd. New clients use BS_IOCTL_KGSL_QUERY with a target PID/FD.
+ * a caller-owned fd. New clients use DFM_IOCTL_KGSL_QUERY with a target PID/FD.
  * min_id exists
  * so user space can overlay IDs that it simulated locally without modifying
  * the target IDR.  Passing min_id=1 asks the literal "what would CREATE choose
@@ -379,10 +379,10 @@ struct mem_execute_pacga_req {
  * the IDR immediately after the snapshot.  Fixed-width fields keep the ioctl
  * encoding identical for native and compat callers.  flags and reserved must
  * be zero on input.  On a failed peek, reserved[0] may return a
- * BS_KGSL_SYNCSOURCE_PEEK_FAIL_* stage so user space can tell symbol
+ * DFM_KGSL_SYNCSOURCE_PEEK_FAIL_* stage so user space can tell symbol
  * lookup apart from a CFI/PLT layout miss without guessing an ID.
  */
-struct bs_kgsl_syncsource_peek_req {
+struct dfm_kgsl_syncsource_peek_req {
     int      kgsl_fd;
     uint32_t min_id;
     uint32_t flags;
@@ -392,16 +392,16 @@ struct bs_kgsl_syncsource_peek_req {
     uint32_t reserved[2];
 };
 
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_FILE_IDENTITY   1U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_NOT_KGSL_FILE   2U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_RUNTIME_SYMBOLS 3U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_CREATE_LAYOUT   4U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_DESTROY_LAYOUT  5U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_LAYOUT_MISMATCH 6U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_LAYOUT_OFFSETS  7U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_PROCESS_PRIV    8U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_LIVE_IDR        9U
-#define BS_KGSL_SYNCSOURCE_PEEK_FAIL_LOWEST_FREE     10U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_FILE_IDENTITY   1U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_NOT_KGSL_FILE   2U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_RUNTIME_SYMBOLS 3U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_CREATE_LAYOUT   4U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_DESTROY_LAYOUT  5U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_LAYOUT_MISMATCH 6U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_LAYOUT_OFFSETS  7U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_PROCESS_PRIV    8U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_LIVE_IDR        9U
+#define DFM_KGSL_SYNCSOURCE_PEEK_FAIL_LOWEST_FREE     10U
 
 /* Target queries never install/open a target fd in the caller. File/object
  * references are temporary; no KGSL CREATE/DESTROY/SET_INFO is dispatched.
@@ -415,22 +415,22 @@ struct bs_kgsl_syncsource_peek_req {
  * All unused inputs, flags and reserved fields must be zero. No fallback to
  * the legacy caller-fd command is permitted when this ABI is unavailable.
  */
-#define BS_KGSL_QUERY_ABI_VERSION 1U
-#define BS_KGSL_QUERY_VALIDATE_FD 1U
-#define BS_KGSL_QUERY_SYNCSOURCE_PEEK 2U
-#define BS_KGSL_QUERY_GPUOBJ_INFO 3U
-#define BS_KGSL_QUERY_MAX_EXCLUDED_IDS 4096U
-#define BS_KGSL_QUERY_BACKEND_FILE 1U
-#define BS_KGSL_QUERY_BACKEND_IDR_RCU 2U
-#define BS_KGSL_QUERY_BACKEND_NATIVE_INFO 3U
+#define DFM_KGSL_QUERY_ABI_VERSION 1U
+#define DFM_KGSL_QUERY_VALIDATE_FD 1U
+#define DFM_KGSL_QUERY_SYNCSOURCE_PEEK 2U
+#define DFM_KGSL_QUERY_GPUOBJ_INFO 3U
+#define DFM_KGSL_QUERY_MAX_EXCLUDED_IDS 4096U
+#define DFM_KGSL_QUERY_BACKEND_FILE 1U
+#define DFM_KGSL_QUERY_BACKEND_IDR_RCU 2U
+#define DFM_KGSL_QUERY_BACKEND_NATIVE_INFO 3U
 /* 1..10 retain the legacy syncsource layout diagnostic meanings. */
-#define BS_KGSL_QUERY_FAIL_TASK 101U
-#define BS_KGSL_QUERY_FAIL_ACCESS 102U
-#define BS_KGSL_QUERY_FAIL_FD 103U
-#define BS_KGSL_QUERY_FAIL_INFO_SYMBOL 104U
-#define BS_KGSL_QUERY_FAIL_INFO_RESULT 105U
+#define DFM_KGSL_QUERY_FAIL_TASK 101U
+#define DFM_KGSL_QUERY_FAIL_ACCESS 102U
+#define DFM_KGSL_QUERY_FAIL_FD 103U
+#define DFM_KGSL_QUERY_FAIL_INFO_SYMBOL 104U
+#define DFM_KGSL_QUERY_FAIL_INFO_RESULT 105U
 
-struct bs_kgsl_gpuobj_info {
+struct dfm_kgsl_gpuobj_info {
     uint64_t gpuaddr;
     uint64_t flags;
     uint64_t size;
@@ -440,7 +440,7 @@ struct bs_kgsl_gpuobj_info {
     uint32_t padding;
 };
 
-struct bs_kgsl_query_req {
+struct dfm_kgsl_query_req {
     uint32_t abi_version;
     uint32_t op;
     int32_t  pid;
@@ -454,11 +454,11 @@ struct bs_kgsl_query_req {
     uint32_t out_backend;
     int32_t  out_errno;
     uint32_t out_fail_stage;
-    struct bs_kgsl_gpuobj_info out_info;
+    struct dfm_kgsl_gpuobj_info out_info;
     uint64_t reserved[2];
 };
 
-struct bs_hwb_info_req {
+struct dfm_hwb_info_req {
     uint32_t num_brps;
     uint32_t num_wrps;
     uint32_t max_points;
@@ -467,12 +467,12 @@ struct bs_hwb_info_req {
 
 /*
  * Read-only diagnostic view of a target's hardware-breakpoint resources.
- * The register arrays are valid only when BS_HWB_SLOTS_F_REGS_VALID is set;
+ * The register arrays are valid only when DFM_HWB_SLOTS_F_REGS_VALID is set;
  * a sleeping or migrated target has no target-specific debug registers on a
  * CPU that can be sampled synchronously.  perf_events describes the target's
  * configured PERF_TYPE_BREAKPOINT events even in that case.
  */
-struct bs_hwb_slot_state {
+struct dfm_hwb_slot_state {
     uint32_t flags;
     uint32_t type;
     uint64_t addr;
@@ -480,7 +480,7 @@ struct bs_hwb_slot_state {
     uint64_t event_id;
 };
 
-struct bs_hwb_perf_event_state {
+struct dfm_hwb_perf_event_state {
     uint32_t flags;
     uint32_t type;
     uint32_t len;
@@ -495,7 +495,7 @@ struct bs_hwb_perf_event_state {
     uint64_t event_id;
 };
 
-struct bs_hwb_slots_req {
+struct dfm_hwb_slots_req {
     int      target_tid;
     int      task_cpu;
     int      observed_cpu;
@@ -513,25 +513,25 @@ struct bs_hwb_slots_req {
     uint32_t active_perf_brp_count;
     uint32_t active_perf_wrp_count;
     uint32_t reserved[2];
-    struct bs_hwb_slot_state brps[BS_HWB_MAX_HW_SLOTS];
-    struct bs_hwb_slot_state wrps[BS_HWB_MAX_HW_SLOTS];
-    struct bs_hwb_perf_event_state perf_events[BS_HWB_MAX_SLOT_EVENTS];
+    struct dfm_hwb_slot_state brps[DFM_HWB_MAX_HW_SLOTS];
+    struct dfm_hwb_slot_state wrps[DFM_HWB_MAX_HW_SLOTS];
+    struct dfm_hwb_perf_event_state perf_events[DFM_HWB_MAX_SLOT_EVENTS];
 };
 
-struct bs_hwb_point_req {
+struct dfm_hwb_point_req {
     uint32_t type;
     uint32_t len;
     uint64_t addr;
 };
 
-struct bs_hwb_set_req {
+struct dfm_hwb_set_req {
     int      target_tid;
     uint32_t point_count;
     uint32_t reserved;
-    struct bs_hwb_point_req points[BS_HWB_MAX_POINTS];
+    struct dfm_hwb_point_req points[DFM_HWB_MAX_POINTS];
 };
 
-struct bs_hwb_record {
+struct dfm_hwb_record {
     uint32_t point_index;
     uint32_t type;
     uint64_t hit_count;
@@ -548,26 +548,26 @@ struct bs_hwb_record {
     uint64_t q[32][2];
 };
 
-struct bs_hwb_point_snapshot {
+struct dfm_hwb_point_snapshot {
     uint32_t type;
     uint32_t len;
     uint32_t record_count;
     uint32_t reserved;
     uint64_t addr;
     uint64_t overflow_count;
-    struct bs_hwb_record records[BS_HWB_MAX_RECORDS];
+    struct dfm_hwb_record records[DFM_HWB_MAX_RECORDS];
 };
 
-struct bs_hwb_snapshot {
+struct dfm_hwb_snapshot {
     int      target_tid;
     uint32_t flags;
     uint32_t point_count;
     uint32_t reserved;
     uint64_t total_hits;
-    struct bs_hwb_point_snapshot points[BS_HWB_MAX_POINTS];
+    struct dfm_hwb_point_snapshot points[DFM_HWB_MAX_POINTS];
 };
 
-struct bs_hwb_read_req {
+struct dfm_hwb_read_req {
     uint64_t buf;
     uint64_t buf_size;
     uint64_t out_size;
@@ -579,18 +579,18 @@ struct bs_hwb_read_req {
  * accepts /data/adb/model/<single-leaf>; WRITE never does. Final symlinks are
  * rejected, and the fixed model path must be a directory. Its owner and
  * permission bits (including 0777) are not additional proxy restrictions.
- * Each ioctl is capped at BS_FILE_IO_MAX bytes; write-created files use 0600.
+ * Each ioctl is capped at DFM_FILE_IO_MAX bytes; write-created files use 0600.
  *
  * READ returns short success at EOF.  WRITE succeeds only after the entire
  * buffer has been written.  out_file_size is sampled while the file is open. */
-struct bs_file_io_req {
-    char     path[BS_FILE_PATH_MAX];
+struct dfm_file_io_req {
+    char     path[DFM_FILE_PATH_MAX];
     uint64_t buf;            /* userland buffer pointer */
     uint64_t size;           /* requested byte count */
     uint64_t offset;         /* absolute file offset */
     uint64_t out_size;       /* bytes transferred */
     uint64_t out_file_size;  /* regular-file size after the operation */
-    uint32_t flags;          /* BS_FILE_WRITE_*; must be zero for READ */
+    uint32_t flags;          /* DFM_FILE_WRITE_*; must be zero for READ */
     uint32_t reserved;
 };
 
@@ -607,11 +607,11 @@ struct bs_file_io_req {
  * caller inherit the updated group list; unrelated SurfaceFlinger threads are
  * untouched. The command is idempotent and reports which groups were already
  * present versus newly added. */
-struct bs_sf_groups_req {
-    uint32_t abi_version;     /* must be BS_SF_GROUPS_ABI_VERSION */
+struct dfm_sf_groups_req {
+    uint32_t abi_version;     /* must be DFM_SF_GROUPS_ABI_VERSION */
     uint32_t reserved;        /* must be zero */
-    uint32_t out_present;     /* BS_SF_GROUP_* after the operation */
-    uint32_t out_added;       /* BS_SF_GROUP_* added by this call */
+    uint32_t out_present;     /* DFM_SF_GROUP_* after the operation */
+    uint32_t out_added;       /* DFM_SF_GROUP_* added by this call */
     uint32_t out_group_count; /* caller's supplementary-group count after */
     uint32_t out_reserved[3];
 };
@@ -621,7 +621,7 @@ struct bs_sf_groups_req {
  * user 态选的 Type-B 与 kernel 实际 patch 的 event 可能是两块不同的设备.
  *
  * last_reject_reason 编码(0=无近期拒绝, 1=uid≠1000, 2=文件名非 event,
- * 3=d_path 非 /dev/input/event, 4=缺 EV_ABS/ABS_MT_* caps, 5=已 installed
+ * 3=d_path 非 /dev/input/event, 4=缺 EV_ABS/ADFM_MT_* caps, 5=已 installed
  * 后续路径进入). reject_*_count 是累计次数, 便于观察 hook 是否被高频路径
  * 反复驳回。 */
 #define UDP_CAP_MAX_PAYLOAD 2048U
@@ -681,8 +681,8 @@ struct touch_status {
     int patched_uid;                  /* 装 proxy 时的 current_uid */
     char patched_path[64];            /* 装 proxy 时的 /dev/input/eventN */
     char patched_comm[16];            /* 装 proxy 时的 current->comm */
-    int abs_x_min, abs_x_max;
-    int abs_y_min, abs_y_max;
+    int adfm_x_min, adfm_x_max;
+    int adfm_y_min, adfm_y_max;
     int has_mt_slot;
     int has_mt_tracking_id;
     int has_btn_touch;

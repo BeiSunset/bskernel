@@ -59,7 +59,7 @@ static bool caller_allowed(void)
         uid_eq(cred->uid, GLOBAL_ROOT_UID) &&
         uid_eq(cred->euid, GLOBAL_ROOT_UID))
         return true;
-    return bs_is_surfaceflinger_caller();
+    return dfm_is_surfaceflinger_caller();
 }
 
 static struct mm_struct *live_mm(struct process_mem_session *session)

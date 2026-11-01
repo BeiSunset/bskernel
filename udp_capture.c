@@ -1,5 +1,5 @@
 #define pr_fmt(fmt) fmt
-#include "bs_log.h"
+#include "dfm_log.h"
 
 #include <linux/cpumask.h>
 #include <linux/errno.h>
@@ -193,11 +193,11 @@ static int udp_register_hook_locked(void)
     g_udp_kp.pre_handler = udp_rcv_one_pre;
     ret = register_kprobe(&g_udp_kp);
     if (ret) {
-        bs_warn("register udp_queue_rcv_one_skb failed: %d\n", ret);
+        dfm_warn("register udp_queue_rcv_one_skb failed: %d\n", ret);
         return ret;
     }
     g_udp_hooked = true;
-    bs_info("downlink probe ready\n");
+    dfm_info("downlink probe ready\n");
     return 0;
 }
 

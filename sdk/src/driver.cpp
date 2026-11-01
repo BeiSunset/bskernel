@@ -1,6 +1,6 @@
-#include <bs/driver.h>
+#include <dfm/driver.h>
 #include "log.h"
-#include <bs/abi.h>
+#include <dfm/abi.h>
 
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -9,11 +9,11 @@
 #include <cstring>
 #include <limits>
 
-static_assert(sizeof(bs_kgsl_syncsource_peek_req) == 32U);
-static_assert(sizeof(bs_kgsl_query_req) == 120U);
-static_assert(offsetof(bs_kgsl_query_req, excluded_ids) == 32U);
-static_assert(offsetof(bs_kgsl_query_req, out_info) == 56U);
-static_assert(sizeof(bs_kgsl_gpuobj_info) == 48U);
+static_assert(sizeof(dfm_kgsl_syncsource_peek_req) == 32U);
+static_assert(sizeof(dfm_kgsl_query_req) == 120U);
+static_assert(offsetof(dfm_kgsl_query_req, excluded_ids) == 32U);
+static_assert(offsetof(dfm_kgsl_query_req, out_info) == 56U);
+static_assert(sizeof(dfm_kgsl_gpuobj_info) == 48U);
 static_assert(sizeof(mem_thread_tid_info) == 16U);
 static_assert(sizeof(mem_get_thread_tids_req) == 1296U);
 static_assert(sizeof(udp_cap_packet) == 2088U);
@@ -26,8 +26,8 @@ static_assert(sizeof(mem_process_mem_arm_req) == 40U);
 static_assert(sizeof(mem_query_signal_req) == 72U);
 static_assert(offsetof(mem_query_signal_req, out_alt_sp) == 48U);
 static_assert(offsetof(mem_query_mapping_req, out_phys_addr) == 16U);
-static_assert(sizeof(bs_file_io_req) == 304U);
-static_assert(sizeof(bs_sf_groups_req) == 32U);
+static_assert(sizeof(dfm_file_io_req) == 304U);
+static_assert(sizeof(dfm_sf_groups_req) == 32U);
 static_assert(sizeof(mem_batch_seg) == 32U);
 static_assert(sizeof(mem_batch_req) == 32U);
 
@@ -161,7 +161,7 @@ namespace bs {
         int fd = -1;
         if (install_fd_via_syscall_scan(fd)) {
             g_fd = fd;
-            LOGD("bs::init() success via syscall scan: fd=%d", g_fd);
+            LOGD("dfm::init() success via syscall scan: fd=%d", g_fd);
             return true;
         }
 
@@ -169,12 +169,12 @@ namespace bs {
         syscall(__NR_reboot, INSTALL_MAGIC1, INSTALL_MAGIC2, 0, &fd);
 
         if (fd < 0) {
-            LOGE("bs::init() failed: fd=%d (kernel module may not be loaded)", fd);
+            LOGE("dfm::init() failed: fd=%d (kernel module may not be loaded)", fd);
             return false;
         }
 
         g_fd = fd;
-        LOGD("bs::init() success via reboot fallback: fd=%d", g_fd);
+        LOGD("dfm::init() success via reboot fallback: fd=%d", g_fd);
         return true;
     }
 
@@ -390,51 +390,51 @@ namespace bs {
         return true;
     }
 
-    long query_kgsl(bs_kgsl_query_req& req) {
+    long query_kgsl(dfm_kgsl_query_req& req) {
         const uint32_t op = req.op;
         const uint32_t minId = req.min_id;
         const uint32_t objectId = req.object_id;
-        req.abi_version = BS_KGSL_QUERY_ABI_VERSION;
+        req.abi_version = DFM_KGSL_QUERY_ABI_VERSION;
         req.out_id = req.out_backend = req.out_fail_stage = 0;
         req.out_errno = 0;
         req.out_info = {};
         if (g_fd < 0)
             return -EBADF;
-        if (req.pid <= 0 || op < BS_KGSL_QUERY_VALIDATE_FD ||
-            op > BS_KGSL_QUERY_GPUOBJ_INFO)
+        if (req.pid <= 0 || op < DFM_KGSL_QUERY_VALIDATE_FD ||
+            op > DFM_KGSL_QUERY_GPUOBJ_INFO)
             return -EINVAL;
         const long result = call_ioctl(g_fd,
-                                       BS_IOCTL_KGSL_QUERY, (long)&req);
+                                       DFM_IOCTL_KGSL_QUERY, (long)&req);
         if (result < 0)
             return result;
-        if (result != 0 || req.abi_version != BS_KGSL_QUERY_ABI_VERSION ||
+        if (result != 0 || req.abi_version != DFM_KGSL_QUERY_ABI_VERSION ||
             req.op != op || req.out_errno < 0 || req.out_errno > 4095 ||
             req.out_fail_stage != 0)
             return -EPROTO;
         if (req.out_errno != 0)
             return 0;
-        const uint32_t expectedBackend = op == BS_KGSL_QUERY_VALIDATE_FD
-            ? BS_KGSL_QUERY_BACKEND_FILE
-            : op == BS_KGSL_QUERY_SYNCSOURCE_PEEK
-                ? BS_KGSL_QUERY_BACKEND_IDR_RCU
-                : BS_KGSL_QUERY_BACKEND_NATIVE_INFO;
+        const uint32_t expectedBackend = op == DFM_KGSL_QUERY_VALIDATE_FD
+            ? DFM_KGSL_QUERY_BACKEND_FILE
+            : op == DFM_KGSL_QUERY_SYNCSOURCE_PEEK
+                ? DFM_KGSL_QUERY_BACKEND_IDR_RCU
+                : DFM_KGSL_QUERY_BACKEND_NATIVE_INFO;
         if (req.out_backend != expectedBackend)
             return -EPROTO;
-        if (op == BS_KGSL_QUERY_SYNCSOURCE_PEEK &&
+        if (op == DFM_KGSL_QUERY_SYNCSOURCE_PEEK &&
             (req.out_id < minId || req.out_id == 0 ||
              req.out_id > static_cast<uint32_t>((std::numeric_limits<int>::max)())))
             return -EPROTO;
-        if (op == BS_KGSL_QUERY_GPUOBJ_INFO &&
+        if (op == DFM_KGSL_QUERY_GPUOBJ_INFO &&
             (req.out_info.id != objectId || objectId == 0 || req.out_info.padding))
             return -EPROTO;
         return 0;
     }
 
-    bool hwb_info(bs_hwb_info_req& out) {
-        bs_hwb_info_req req{};
+    bool hwb_info(dfm_hwb_info_req& out) {
+        dfm_hwb_info_req req{};
 
         g_last_ioctl_result =
-            call_ioctl(g_fd, BS_IOCTL_HWB_INFO, (long)&req);
+            call_ioctl(g_fd, DFM_IOCTL_HWB_INFO, (long)&req);
         if (g_last_ioctl_result < 0)
             return false;
 
@@ -442,12 +442,12 @@ namespace bs {
         return true;
     }
 
-    bool hwb_slots(int targetTid, bs_hwb_slots_req& out) {
-        bs_hwb_slots_req req{};
+    bool hwb_slots(int targetTid, dfm_hwb_slots_req& out) {
+        dfm_hwb_slots_req req{};
         req.target_tid = targetTid;
 
         g_last_ioctl_result =
-            call_ioctl(g_fd, BS_IOCTL_HWB_SLOTS, (long)&req);
+            call_ioctl(g_fd, DFM_IOCTL_HWB_SLOTS, (long)&req);
         if (g_last_ioctl_result < 0)
             return false;
 
@@ -455,33 +455,33 @@ namespace bs {
         return true;
     }
 
-    bool hwb_set(int targetTid, const bs_hwb_point_req* points, size_t pointCount) {
-        if (!points || pointCount == 0 || pointCount > BS_HWB_MAX_POINTS)
+    bool hwb_set(int targetTid, const dfm_hwb_point_req* points, size_t pointCount) {
+        if (!points || pointCount == 0 || pointCount > DFM_HWB_MAX_POINTS)
             return false;
 
-        bs_hwb_set_req req{};
+        dfm_hwb_set_req req{};
         req.target_tid = targetTid;
         req.point_count = static_cast<uint32_t>(pointCount);
         memcpy(req.points, points, sizeof(req.points[0]) * pointCount);
 
         g_last_ioctl_result =
-            call_ioctl(g_fd, BS_IOCTL_HWB_SET, (long)&req);
+            call_ioctl(g_fd, DFM_IOCTL_HWB_SET, (long)&req);
         return g_last_ioctl_result == 0;
     }
 
-    bool hwb_read(bs_hwb_snapshot& out) {
-        bs_hwb_read_req req{};
+    bool hwb_read(dfm_hwb_snapshot& out) {
+        dfm_hwb_read_req req{};
         req.buf = reinterpret_cast<uint64_t>(&out);
         req.buf_size = sizeof(out);
 
         g_last_ioctl_result =
-            call_ioctl(g_fd, BS_IOCTL_HWB_READ, (long)&req);
+            call_ioctl(g_fd, DFM_IOCTL_HWB_READ, (long)&req);
         return g_last_ioctl_result == 0;
     }
 
     bool hwb_clear() {
         g_last_ioctl_result =
-            call_ioctl(g_fd, BS_IOCTL_HWB_CLEAR, 0);
+            call_ioctl(g_fd, DFM_IOCTL_HWB_CLEAR, 0);
         return g_last_ioctl_result == 0;
     }
 
@@ -546,11 +546,11 @@ namespace bs {
     }
 
     long kgsl_syncsource_peek(int kgsl_fd, uint32_t min_id,
-                              bs_kgsl_syncsource_peek_req& out) {
+                              dfm_kgsl_syncsource_peek_req& out) {
         out.kgsl_fd = kgsl_fd;
         out.min_id = min_id;
         out.flags = 0;
-        out.abi_version = BS_KGSL_SYNCSOURCE_PEEK_ABI_VERSION;
+        out.abi_version = DFM_KGSL_SYNCSOURCE_PEEK_ABI_VERSION;
         out.out_id = 0;
         out.out_backend = 0;
         out.reserved[0] = 0;
@@ -560,7 +560,7 @@ namespace bs {
         if (kgsl_fd < 0 || !min_id)
             return -EINVAL;
         g_last_ioctl_result =
-            call_ioctl(g_fd, BS_IOCTL_KGSL_SYNCSOURCE_PEEK, (long)&out);
+            call_ioctl(g_fd, DFM_IOCTL_KGSL_SYNCSOURCE_PEEK, (long)&out);
         return g_last_ioctl_result;
     }
 
@@ -576,16 +576,16 @@ namespace bs {
         if (out_file_size)
             *out_file_size = 0;
         if (g_fd < 0 || !path || !*path || !buf || size == 0 ||
-            size > BS_FILE_IO_MAX ||
-            strnlen(path, BS_FILE_PATH_MAX) >= BS_FILE_PATH_MAX)
+            size > DFM_FILE_IO_MAX ||
+            strnlen(path, DFM_FILE_PATH_MAX) >= DFM_FILE_PATH_MAX)
             return false;
 
-        bs_file_io_req req{};
+        dfm_file_io_req req{};
         strncpy(req.path, path, sizeof(req.path) - 1);
         req.buf = reinterpret_cast<uint64_t>(buf);
         req.size = size;
         req.offset = offset;
-        g_last_ioctl_result = call_ioctl(g_fd, BS_FILE_IOC_READ, (long)&req);
+        g_last_ioctl_result = call_ioctl(g_fd, DFM_FILE_IOC_READ, (long)&req);
         if (g_last_ioctl_result < 0 || req.out_size > size)
             return false;
 
@@ -602,17 +602,17 @@ namespace bs {
         if (out_file_size)
             *out_file_size = 0;
         if (g_fd < 0 || !path || !*path ||
-            (size != 0 && !buf) || size > BS_FILE_IO_MAX ||
-            strnlen(path, BS_FILE_PATH_MAX) >= BS_FILE_PATH_MAX)
+            (size != 0 && !buf) || size > DFM_FILE_IO_MAX ||
+            strnlen(path, DFM_FILE_PATH_MAX) >= DFM_FILE_PATH_MAX)
             return false;
 
-        bs_file_io_req req{};
+        dfm_file_io_req req{};
         strncpy(req.path, path, sizeof(req.path) - 1);
         req.buf = reinterpret_cast<uint64_t>(buf);
         req.size = size;
         req.offset = offset;
         req.flags = flags;
-        g_last_ioctl_result = call_ioctl(g_fd, BS_FILE_IOC_WRITE, (long)&req);
+        g_last_ioctl_result = call_ioctl(g_fd, DFM_FILE_IOC_WRITE, (long)&req);
         if (g_last_ioctl_result < 0 || req.out_size != size)
             return false;
 
@@ -625,8 +625,8 @@ namespace bs {
     bool supports_surfaceflinger_groups() {
         if (g_fd < 0)
             return false;
-        bs_sf_groups_req req{}; // version 0 must be rejected before mutation
-        g_last_ioctl_result = call_ioctl(g_fd, BS_CRED_IOC_ACQUIRE_SF_GROUPS, (long)&req);
+        dfm_sf_groups_req req{}; // version 0 must be rejected before mutation
+        g_last_ioctl_result = call_ioctl(g_fd, DFM_CRED_IOC_ACQUIRE_SF_GROUPS, (long)&req);
         return g_last_ioctl_result == -EINVAL;
     }
 
@@ -639,9 +639,9 @@ namespace bs {
             return false;
         }
 
-        bs_sf_groups_req req{};
-        req.abi_version = BS_SF_GROUPS_ABI_VERSION;
-        g_last_ioctl_result = call_ioctl(g_fd, BS_CRED_IOC_ACQUIRE_SF_GROUPS, (long)&req);
+        dfm_sf_groups_req req{};
+        req.abi_version = DFM_SF_GROUPS_ABI_VERSION;
+        g_last_ioctl_result = call_ioctl(g_fd, DFM_CRED_IOC_ACQUIRE_SF_GROUPS, (long)&req);
         if (info) {
             info->ioctlResult = g_last_ioctl_result;
             info->present = req.out_present;
@@ -649,7 +649,7 @@ namespace bs {
             info->groupCount = req.out_group_count;
         }
         return g_last_ioctl_result == 0 &&
-               req.out_present == BS_SF_GROUP_REQUIRED;
+               req.out_present == DFM_SF_GROUP_REQUIRED;
     }
     bool read_memory(int pid, uint64_t addr, void* buf, size_t sz) {
         if (g_fd < 0 || pid <= 0 || !buf || sz == 0) return false;

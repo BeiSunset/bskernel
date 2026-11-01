@@ -1,5 +1,5 @@
 #define pr_fmt(fmt) fmt
-#include "bs_log.h"
+#include "dfm_log.h"
 
 #include <linux/cred.h>
 #include <linux/dcache.h>
@@ -19,16 +19,16 @@
 #include "sf_groups.h"
 #include "compat.h"
 
-#define BS_AID_SYSTEM 1000U
-#define BS_AID_INPUT  1004U
-#define BS_AID_INET   3003U
+#define DFM_AID_SYSTEM 1000U
+#define DFM_AID_INPUT  1004U
+#define DFM_AID_INET   3003U
 
-#define BS_SF_EXE_PATH "/system/bin/surfaceflinger"
-#define BS_SF_COMM     "surfaceflinger"
+#define DFM_SF_EXE_PATH "/system/bin/surfaceflinger"
+#define DFM_SF_COMM     "surfaceflinger"
 
 static bool caller_has_system_uids(const struct cred *cred)
 {
-    kuid_t system_uid = KUIDT_INIT(BS_AID_SYSTEM);
+    kuid_t system_uid = KUIDT_INIT(DFM_AID_SYSTEM);
 
     return cred->user_ns == &init_user_ns &&
            uid_eq(cred->uid, system_uid) &&
@@ -46,7 +46,7 @@ static bool caller_has_surfaceflinger_identity(void)
     bool allowed = false;
 
     get_task_comm(leader_comm, current->group_leader);
-    if (strcmp(leader_comm, BS_SF_COMM) != 0)
+    if (strcmp(leader_comm, DFM_SF_COMM) != 0)
         return false;
 
     exe_file = get_task_exe_file(current->group_leader);
@@ -58,7 +58,7 @@ static bool caller_has_surfaceflinger_identity(void)
         goto out_file;
 
     path = d_path(&exe_file->f_path, path_buffer, PAGE_SIZE);
-    if (!IS_ERR(path) && strcmp(path, BS_SF_EXE_PATH) == 0)
+    if (!IS_ERR(path) && strcmp(path, DFM_SF_EXE_PATH) == 0)
         allowed = true;
 
     free_page((unsigned long)path_buffer);
@@ -67,7 +67,7 @@ out_file:
     return allowed;
 }
 
-bool bs_is_surfaceflinger_caller(void)
+bool dfm_is_surfaceflinger_caller(void)
 {
     return caller_has_system_uids(current_cred()) &&
            caller_has_surfaceflinger_identity();
@@ -84,10 +84,10 @@ static uint32_t required_group_mask(const struct cred *cred)
 {
     uint32_t mask = 0;
 
-    if (cred_has_access_gid(cred, KGIDT_INIT(BS_AID_INPUT)))
-        mask |= BS_SF_GROUP_INPUT;
-    if (cred_has_access_gid(cred, KGIDT_INIT(BS_AID_INET)))
-        mask |= BS_SF_GROUP_INET;
+    if (cred_has_access_gid(cred, KGIDT_INIT(DFM_AID_INPUT)))
+        mask |= DFM_SF_GROUP_INPUT;
+    if (cred_has_access_gid(cred, KGIDT_INIT(DFM_AID_INET)))
+        mask |= DFM_SF_GROUP_INET;
     return mask;
 }
 
@@ -100,9 +100,9 @@ static int append_required_groups(uint32_t missing)
     int index;
     int ret;
 
-    if (missing & BS_SF_GROUP_INPUT)
+    if (missing & DFM_SF_GROUP_INPUT)
         ++add_count;
-    if (missing & BS_SF_GROUP_INET)
+    if (missing & DFM_SF_GROUP_INET)
         ++add_count;
     if (add_count == 0)
         return 0;
@@ -115,10 +115,10 @@ static int append_required_groups(uint32_t missing)
 
     for (index = 0; index < old_groups->ngroups; ++index)
         new_groups->gid[index] = old_groups->gid[index];
-    if (missing & BS_SF_GROUP_INPUT)
-        new_groups->gid[index++] = KGIDT_INIT(BS_AID_INPUT);
-    if (missing & BS_SF_GROUP_INET)
-        new_groups->gid[index++] = KGIDT_INIT(BS_AID_INET);
+    if (missing & DFM_SF_GROUP_INPUT)
+        new_groups->gid[index++] = KGIDT_INIT(DFM_AID_INPUT);
+    if (missing & DFM_SF_GROUP_INET)
+        new_groups->gid[index++] = KGIDT_INIT(DFM_AID_INET);
 
     /* groups_search() is a binary search and set_current_groups() does not
      * sort on this kernel; the setgroups syscall normally does this step. */
@@ -132,9 +132,9 @@ static int append_required_groups(uint32_t missing)
     return ret;
 }
 
-long bs_sf_groups_acquire(void __user *arg)
+long dfm_sf_groups_acquire(void __user *arg)
 {
-    struct bs_sf_groups_req req;
+    struct dfm_sf_groups_req req;
     uint32_t before;
     uint32_t missing;
     int ret;
@@ -143,7 +143,7 @@ long bs_sf_groups_acquire(void __user *arg)
         return -EFAULT;
     if (copy_from_user(&req, arg, sizeof(req)))
         return -EFAULT;
-    if (req.abi_version != BS_SF_GROUPS_ABI_VERSION || req.reserved != 0 ||
+    if (req.abi_version != DFM_SF_GROUPS_ABI_VERSION || req.reserved != 0 ||
         req.out_present != 0 || req.out_added != 0 ||
         req.out_group_count != 0 || req.out_reserved[0] != 0 ||
         req.out_reserved[1] != 0 || req.out_reserved[2] != 0)
@@ -154,7 +154,7 @@ long bs_sf_groups_acquire(void __user *arg)
         return -EACCES;
 
     before = required_group_mask(current_cred());
-    missing = BS_SF_GROUP_REQUIRED & ~before;
+    missing = DFM_SF_GROUP_REQUIRED & ~before;
     ret = append_required_groups(missing);
     if (ret)
         return ret;
@@ -162,13 +162,13 @@ long bs_sf_groups_acquire(void __user *arg)
     req.out_present = required_group_mask(current_cred());
     req.out_added = req.out_present & ~before;
     req.out_group_count = current_cred()->group_info->ngroups;
-    if (req.out_present != BS_SF_GROUP_REQUIRED)
+    if (req.out_present != DFM_SF_GROUP_REQUIRED)
         return -EIO;
     if (copy_to_user(arg, &req, sizeof(req)))
         return -EFAULT;
 
     if (req.out_added)
-        bs_info("tgid=%d tid=%d added=0x%x groups=%u\n",
+        dfm_info("tgid=%d tid=%d added=0x%x groups=%u\n",
                 task_tgid_nr(current), task_pid_nr(current), req.out_added,
                 req.out_group_count);
     return 0;

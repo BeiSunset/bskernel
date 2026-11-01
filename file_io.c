@@ -1,5 +1,5 @@
 #define pr_fmt(fmt) fmt
-#include "bs_log.h"
+#include "dfm_log.h"
 
 #include <linux/cred.h>
 #include <linux/err.h>
@@ -18,12 +18,12 @@
 #include "file_io.h"
 #include "compat.h"
 
-#define BS_FILE_ROOT "/data/adb"
-#define BS_FILE_PREFIX BS_FILE_ROOT "/"
-#define BS_MODEL_ROOT BS_FILE_ROOT "/model"
-#define BS_MODEL_PREFIX BS_MODEL_ROOT "/"
-#define BS_FILE_WRITE_FLAGS \
-    (BS_FILE_WRITE_CREATE | BS_FILE_WRITE_TRUNCATE)
+#define DFM_FILE_ROOT "/data/adb"
+#define DFM_FILE_PREFIX DFM_FILE_ROOT "/"
+#define DFM_MODEL_ROOT DFM_FILE_ROOT "/model"
+#define DFM_MODEL_PREFIX DFM_MODEL_ROOT "/"
+#define DFM_FILE_WRITE_FLAGS \
+    (DFM_FILE_WRITE_CREATE | DFM_FILE_WRITE_TRUNCATE)
 
 static struct cred *g_file_cred;
 static DEFINE_MUTEX(g_file_io_lock);
@@ -44,13 +44,13 @@ static bool valid_leaf_name(const char *name)
 /* Writes remain limited to direct /data/adb children. Reads additionally
  * accept exactly one fixed intermediate directory:
  * /data/adb/model/<leaf>. */
-static int validate_path(struct bs_file_io_req *req, bool writing,
+static int validate_path(struct dfm_file_io_req *req, bool writing,
                          bool *model_path)
 {
     const char *path;
     const char *name;
-    size_t prefix_len = sizeof(BS_FILE_PREFIX) - 1;
-    size_t model_prefix_len = sizeof(BS_MODEL_PREFIX) - 1;
+    size_t prefix_len = sizeof(DFM_FILE_PREFIX) - 1;
+    size_t model_prefix_len = sizeof(DFM_MODEL_PREFIX) - 1;
 
     if (model_path)
         *model_path = false;
@@ -59,7 +59,7 @@ static int validate_path(struct bs_file_io_req *req, bool writing,
         return -ENAMETOOLONG;
 
     path = req->path;
-    if (!writing && strncmp(path, BS_MODEL_PREFIX, model_prefix_len) == 0) {
+    if (!writing && strncmp(path, DFM_MODEL_PREFIX, model_prefix_len) == 0) {
         name = path + model_prefix_len;
         if (!valid_leaf_name(name))
             return -EACCES;
@@ -68,7 +68,7 @@ static int validate_path(struct bs_file_io_req *req, bool writing,
         return 0;
     }
 
-    if (strncmp(path, BS_FILE_PREFIX, prefix_len) != 0 ||
+    if (strncmp(path, DFM_FILE_PREFIX, prefix_len) != 0 ||
         path[prefix_len] == '\0')
         return -EACCES;
 
@@ -84,7 +84,7 @@ static int validate_model_directory(void)
     struct inode *inode;
     int ret = 0;
 
-    directory = filp_open(BS_MODEL_ROOT,
+    directory = filp_open(DFM_MODEL_ROOT,
                           O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
                           0);
     if (IS_ERR(directory))
@@ -99,9 +99,9 @@ static int validate_model_directory(void)
     return ret;
 }
 
-static int validate_buffer(const struct bs_file_io_req *req, bool writing)
+static int validate_buffer(const struct dfm_file_io_req *req, bool writing)
 {
-    if (req->size > BS_FILE_IO_MAX)
+    if (req->size > DFM_FILE_IO_MAX)
         return -E2BIG;
     if (!writing && req->size == 0)
         return -EINVAL;
@@ -122,16 +122,16 @@ static struct file *open_config_file(const char *path, int flags)
 }
 
 static long copy_result_to_user(void __user *arg,
-                                struct bs_file_io_req *req)
+                                struct dfm_file_io_req *req)
 {
     if (copy_to_user(arg, req, sizeof(*req)))
         return -EFAULT;
     return 0;
 }
 
-long bs_file_read(void __user *arg)
+long dfm_file_read(void __user *arg)
 {
-    struct bs_file_io_req req;
+    struct dfm_file_io_req req;
     const struct cred *old_cred;
     struct file *file = NULL;
     char *buffer = NULL;
@@ -163,7 +163,7 @@ long bs_file_read(void __user *arg)
         return -ENOMEM;
 
     mutex_lock(&g_file_io_lock);
-    /* Authoritative check under the same lock bs_file_io_exit() uses, so
+    /* Authoritative check under the same lock dfm_file_io_exit() uses, so
      * override_creds() can never be handed a NULL/freed cred. */
     if (!g_file_cred) {
         mutex_unlock(&g_file_io_lock);
@@ -222,9 +222,9 @@ out:
     return copy_result_to_user(arg, &req);
 }
 
-long bs_file_write(void __user *arg)
+long dfm_file_write(void __user *arg)
 {
-    struct bs_file_io_req req;
+    struct dfm_file_io_req req;
     const struct cred *old_cred;
     struct file *file = NULL;
     char *buffer = NULL;
@@ -240,9 +240,9 @@ long bs_file_write(void __user *arg)
 
     if (!caller_allowed())
         return -EACCES;
-    if ((req.flags & ~BS_FILE_WRITE_FLAGS) != 0 || req.reserved != 0)
+    if ((req.flags & ~DFM_FILE_WRITE_FLAGS) != 0 || req.reserved != 0)
         return -EINVAL;
-    if ((req.flags & BS_FILE_WRITE_TRUNCATE) && req.offset != 0)
+    if ((req.flags & DFM_FILE_WRITE_TRUNCATE) && req.offset != 0)
         return -EINVAL;
     ret = validate_path(&req, true, NULL);
     if (ret)
@@ -253,9 +253,9 @@ long bs_file_write(void __user *arg)
     if (!g_file_cred)
         return -ENODEV;
 
-    if (req.flags & BS_FILE_WRITE_CREATE)
+    if (req.flags & DFM_FILE_WRITE_CREATE)
         open_flags |= O_CREAT;
-    if (req.flags & BS_FILE_WRITE_TRUNCATE)
+    if (req.flags & DFM_FILE_WRITE_TRUNCATE)
         open_flags |= O_TRUNC;
 
     if (req.size != 0) {
@@ -321,7 +321,7 @@ out:
     return copy_result_to_user(arg, &req);
 }
 
-int bs_file_io_init(void)
+int dfm_file_io_init(void)
 {
     struct cred *cred;
     const char *secctx = "u:r:ksu:s0";
@@ -356,11 +356,11 @@ int bs_file_io_init(void)
     }
 
     g_file_cred = cred;
-    bs_info("file I/O context: %s\n", secctx);
+    dfm_info("file I/O context: %s\n", secctx);
     return 0;
 }
 
-void bs_file_io_exit(void)
+void dfm_file_io_exit(void)
 {
     mutex_lock(&g_file_io_lock);
     if (g_file_cred) {

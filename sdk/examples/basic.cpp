@@ -18,14 +18,14 @@
  *
  * Deploy the combined CI archive after extraction (contains bin/ and modules/):
  *   adb push bskernel-arm64-v8a /data/local/tmp/bskernel
- *   adb shell su -c 'chmod 755 /data/local/tmp/bskernel/bin/bs_loader /data/local/tmp/bskernel/bin/bs_example'
- *   adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'
- *   adb shell su -c '/data/local/tmp/bskernel/bin/bs_example <PID> <MODULE_NAME>'
+ *   adb shell su -c 'chmod 755 /data/local/tmp/bskernel/bin/dfm_loader /data/local/tmp/bskernel/bin/dfm_example'
+ *   adb shell su -c '/data/local/tmp/bskernel/bin/dfm_loader'
+ *   adb shell su -c '/data/local/tmp/bskernel/bin/dfm_example <PID> <MODULE_NAME>'
  * To load within this process, pass a .ko file as the final argument instead.
  * No target process is required when running without arguments: it reads self.
  */
-#include <bs/driver.h>
-#include <bs/loader.h>
+#include <dfm/driver.h>
+#include <dfm/loader.h>
 
 #include <array>
 #include <cerrno>
@@ -59,16 +59,16 @@ int main(int argc, char** argv) {
     }
 
     // Establish one connection before starting any threads that use the SDK.
-    if (!bs::init() && !(argc == 4 && loader::load_module_file(argv[3]))) {
-        std::fputs("Load the driver with bs_loader, or provide MODULE_KO.\n", stderr);
+    if (!dfm::init() && !(argc == 4 && loader::load_module_file(argv[3]))) {
+        std::fputs("Load the driver with dfm_loader, or provide MODULE_KO.\n", stderr);
         return 1;
     }
-    struct ConnectionGuard { ~ConnectionGuard() { bs::close(); } } connection;
+    struct ConnectionGuard { ~ConnectionGuard() { dfm::close(); } } connection;
 
     if (argc == 1) {
         const uint64_t expected = 0x1122334455667788ULL;
         uint64_t value = 0;
-        if (!bs::read_memory(pid, reinterpret_cast<uint64_t>(&expected), &value, sizeof(value)) ||
+        if (!dfm::read_memory(pid, reinterpret_cast<uint64_t>(&expected), &value, sizeof(value)) ||
             value != expected) {
             std::fputs("Self memory read failed.\n", stderr);
             return 1;
@@ -77,14 +77,14 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Alternatively resolve a PID with bs::get_process_id(exact_task_comm).
+    // Alternatively resolve a PID with dfm::get_process_id(exact_task_comm).
     uint64_t base = 0, size = 0;
-    if (!bs::get_module_base(pid, argv[2], base, size)) {
+    if (!dfm::get_module_base(pid, argv[2], base, size)) {
         std::fputs("Module lookup failed.\n", stderr);
         return 1;
     }
     std::array<unsigned char, 16> bytes{};
-    if (!bs::read_memory(pid, base, bytes.data(), bytes.size())) {
+    if (!dfm::read_memory(pid, base, bytes.data(), bytes.size())) {
         std::fputs("Module memory read failed.\n", stderr);
         return 1;
     }

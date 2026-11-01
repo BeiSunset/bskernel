@@ -1,5 +1,5 @@
-#ifndef BS_LOADER_ELF_H
-#define BS_LOADER_ELF_H
+#ifndef DFM_LOADER_ELF_H
+#define DFM_LOADER_ELF_H
 
 // Internal, side-effect-free helpers shared by the loader and host regression tests.
 #include <elf.h>

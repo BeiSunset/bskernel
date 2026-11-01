@@ -1,5 +1,5 @@
 #define pr_fmt(fmt) fmt
-#include "bs_log.h"
+#include "dfm_log.h"
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -27,17 +27,17 @@
 #include "syscall.h"
 #include "touch.h"
 #include "touch_v2.h"
-#include "bs_hwb.h"
+#include "dfm_hwb.h"
 #include "udp_capture.h"
 #include "file_io.h"
 #include "sf_groups.h"
 #include "compat.h"
-#include "bs_module.h"
+#include "dfm_module.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("kernel");
 MODULE_DESCRIPTION("kernel module");
-MODULE_VERSION(BS_MODULE_VERSION);
+MODULE_VERSION(DFM_MODULE_VERSION);
 
 /* ---- ioctl dispatcher ---- */
 
@@ -90,19 +90,19 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return mem_get_thread_stack(argp);
     case MEM_IOC_EXECUTE_PACGA:
         return mem_execute_pacga(argp);
-    case BS_IOCTL_HWB_INFO:
-        return bs_hwb_info(argp);
-    case BS_IOCTL_HWB_SLOTS:
-        return bs_hwb_slots(argp);
-    case BS_IOCTL_HWB_SET:
-        return bs_hwb_set(filp, argp);
-    case BS_IOCTL_HWB_READ:
-        return bs_hwb_read(argp);
-    case BS_IOCTL_HWB_CLEAR:
-        return bs_hwb_clear();
-    case BS_IOCTL_KGSL_SYNCSOURCE_PEEK:
+    case DFM_IOCTL_HWB_INFO:
+        return dfm_hwb_info(argp);
+    case DFM_IOCTL_HWB_SLOTS:
+        return dfm_hwb_slots(argp);
+    case DFM_IOCTL_HWB_SET:
+        return dfm_hwb_set(filp, argp);
+    case DFM_IOCTL_HWB_READ:
+        return dfm_hwb_read(argp);
+    case DFM_IOCTL_HWB_CLEAR:
+        return dfm_hwb_clear();
+    case DFM_IOCTL_KGSL_SYNCSOURCE_PEEK:
         return kgsl_syncsource_peek(argp);
-    case BS_IOCTL_KGSL_QUERY:
+    case DFM_IOCTL_KGSL_QUERY:
         return kgsl_query(argp);
     case UDP_IOC_INIT:
         return udp_capture_init(argp);
@@ -112,12 +112,12 @@ static long drv_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         return udp_capture_read_v2(argp);
     case UDP_IOC_STOP:
         return udp_capture_stop();
-    case BS_FILE_IOC_READ:
-        return bs_file_read(argp);
-    case BS_FILE_IOC_WRITE:
-        return bs_file_write(argp);
-    case BS_CRED_IOC_ACQUIRE_SF_GROUPS:
-        return bs_sf_groups_acquire(argp);
+    case DFM_FILE_IOC_READ:
+        return dfm_file_read(argp);
+    case DFM_FILE_IOC_WRITE:
+        return dfm_file_write(argp);
+    case DFM_CRED_IOC_ACQUIRE_SF_GROUPS:
+        return dfm_sf_groups_acquire(argp);
     default:
         return -ENOTTY;
     }
@@ -141,7 +141,7 @@ static int drv_release(struct inode *inode, struct file *filp)
 
     /* Per-owner state dies with this fd; the capture/touch engines are
      * process-global, so only the last control fd may stop them. */
-    bs_hwb_release_owner(filp);
+    dfm_hwb_release_owner(filp);
 
     if (filp->private_data != &g_drv_fd_marker)
         return 0;
@@ -279,7 +279,7 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
         kfree(tw);
         /* Log before dropping the pin: module text/rodata must not be touched
          * after module_put() may have released the last reference. */
-        bs_warn("task_work_add failed\n");
+        dfm_warn("task_work_add failed\n");
         module_put(THIS_MODULE);
     }
 
@@ -317,10 +317,10 @@ static void __init remove_inte_proc_entries(void)
 
 /* Default to 6: skip the syscall-table hook (unstable on GKI/CFI kernels)
  * and install the fd through the reboot kprobe instead. */
-static int bs_stage = BS_STAGE_NO_SYSCALL;
+static int dfm_stage = DFM_STAGE_NO_SYSCALL;
 /* Neutral parameter name: the sysfs node should not advertise the stage
  * machinery. The loader is the only writer. */
-module_param_named(p, bs_stage, int, 0);
+module_param_named(dfm_stage, dfm_stage, int, 0);
 static bool g_mem_inited;
 static bool g_file_inited;
 
@@ -330,14 +330,14 @@ static int __init mod_init(void)
 	int syscall_ret;
 	int reboot_ret;
 
-	ret = bs_compat_init();
+	ret = dfm_compat_init();
 	if (ret < 0) {
 		pr_err("compat init failed: %d\n", ret);
 		return ret;
 	}
 
-	bs_info("compat ready, stage=%d\n", bs_stage);
-	if (bs_stage == BS_STAGE_COMPAT)
+	dfm_info("compat ready, stage=%d\n", dfm_stage);
+	if (dfm_stage == DFM_STAGE_COMPAT)
 		return 0;
 
 	ret = mem_core_init();
@@ -346,30 +346,30 @@ static int __init mod_init(void)
 		return ret;
 	}
 	g_mem_inited = true;
-	if (bs_stage == BS_STAGE_MEM)
+	if (dfm_stage == DFM_STAGE_MEM)
 		return 0;
 
-	ret = bs_file_io_init();
+	ret = dfm_file_io_init();
 	if (ret < 0) {
-		pr_err("bs_file_io_init failed: %d\n", ret);
+		pr_err("dfm_file_io_init failed: %d\n", ret);
 		goto err_mem;
 	}
 	g_file_inited = true;
-	if (bs_stage == BS_STAGE_FILE)
+	if (dfm_stage == DFM_STAGE_FILE)
 		return 0;
 
-	if (bs_stage == BS_STAGE_SYSCALL) {
+	if (dfm_stage == DFM_STAGE_SYSCALL) {
 		syscall_ret = syscall_hook_init();
 		if (syscall_ret < 0)
-			bs_warn("syscall install hook unavailable: %d\n",
+			dfm_warn("syscall install hook unavailable: %d\n",
 				syscall_ret);
 		return 0;
 	}
 
-	if (bs_stage == BS_STAGE_REBOOT) {
+	if (dfm_stage == DFM_STAGE_REBOOT) {
 		reboot_ret = register_kprobe(&kp_reboot);
 		if (reboot_ret < 0) {
-			bs_warn("failed to register kprobe on reboot: %d\n",
+			dfm_warn("failed to register kprobe on reboot: %d\n",
 				reboot_ret);
 			ret = reboot_ret;
 			goto err_file;
@@ -378,19 +378,19 @@ static int __init mod_init(void)
 		return 0;
 	}
 
-	if (bs_stage == BS_STAGE_NO_SYSCALL) {
+	if (dfm_stage == DFM_STAGE_NO_SYSCALL) {
 		syscall_ret = -ENOENT;
-		bs_info("skipping syscall hook, using reboot kprobe only\n");
+		dfm_info("skipping syscall hook, using reboot kprobe only\n");
 	} else {
 		syscall_ret = syscall_hook_init();
 		if (syscall_ret < 0)
-			bs_warn("syscall install hook unavailable: %d\n",
+			dfm_warn("syscall install hook unavailable: %d\n",
 				syscall_ret);
 	}
 
 	reboot_ret = register_kprobe(&kp_reboot);
 	if (reboot_ret < 0) {
-		bs_warn("failed to register kprobe on reboot: %d\n",
+		dfm_warn("failed to register kprobe on reboot: %d\n",
 			reboot_ret);
 	} else {
 		g_reboot_kprobe_registered = 1;
@@ -399,10 +399,10 @@ static int __init mod_init(void)
 	/* Some vendor kernels do not expose __arm64_sys_reboot to kprobes even
 	 * though the syscall-table hook works. In the default no-syscall stage,
 	 * retry through the syscall hook instead of failing the whole load. */
-	if (bs_stage == BS_STAGE_NO_SYSCALL && reboot_ret < 0) {
+	if (dfm_stage == DFM_STAGE_NO_SYSCALL && reboot_ret < 0) {
 		syscall_ret = syscall_hook_init();
 		if (syscall_ret < 0)
-			bs_warn("syscall fallback unavailable: %d\n",
+			dfm_warn("syscall fallback unavailable: %d\n",
 				syscall_ret);
 	}
 
@@ -416,16 +416,16 @@ static int __init mod_init(void)
 
 	remove_inte_proc_entries();
 
-	bs_info("module loaded, syscall_nr=%d reboot_fallback=%d\n",
+	dfm_info("module loaded, syscall_nr=%d reboot_fallback=%d\n",
 		syscall_hook_nr(), g_reboot_kprobe_registered);
 	return 0;
 
 err_hooks:
-	if (bs_stage == BS_STAGE_FULL)
+	if (dfm_stage == DFM_STAGE_FULL)
 		syscall_hook_exit();
 err_file:
 	if (g_file_inited) {
-		bs_file_io_exit();
+		dfm_file_io_exit();
 		g_file_inited = false;
 	}
 err_mem:
@@ -438,57 +438,57 @@ err_mem:
 
 static void __exit mod_exit(void)
 {
-    if (bs_stage == BS_STAGE_COMPAT) {
-        bs_info("stage1 module unloaded\n");
+    if (dfm_stage == DFM_STAGE_COMPAT) {
+        dfm_info("stage1 module unloaded\n");
         return;
     }
-    if (bs_stage == BS_STAGE_MEM) {
+    if (dfm_stage == DFM_STAGE_MEM) {
         if (g_mem_inited)
             mem_core_exit();
-        bs_info("stage2 module unloaded\n");
+        dfm_info("stage2 module unloaded\n");
         return;
     }
-    if (bs_stage == BS_STAGE_FILE) {
+    if (dfm_stage == DFM_STAGE_FILE) {
         if (g_file_inited)
-            bs_file_io_exit();
+            dfm_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
-        bs_info("stage3 module unloaded\n");
+        dfm_info("stage3 module unloaded\n");
         return;
     }
-    if (bs_stage == BS_STAGE_SYSCALL) {
+    if (dfm_stage == DFM_STAGE_SYSCALL) {
         syscall_hook_exit();
         /* This stage hands out the control fd, so every hook engine behind an
          * ioctl is reachable. Without teardown the kprobes, the in-kernel text
          * hooks and the swapped file->f_op would outlive free_module(). */
         udp_capture_exit();
-        bs_hwb_exit();
+        dfm_hwb_exit();
         touch_v2_release_all();
         touch_exit();
         touch_v2_exit();
         if (g_file_inited)
-            bs_file_io_exit();
+            dfm_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
-        bs_info("stage4 module unloaded\n");
+        dfm_info("stage4 module unloaded\n");
         return;
     }
-    if (bs_stage == BS_STAGE_REBOOT) {
+    if (dfm_stage == DFM_STAGE_REBOOT) {
         if (g_reboot_kprobe_registered) {
             unregister_kprobe(&kp_reboot);
             g_reboot_kprobe_registered = 0;
         }
         /* Same as stage 4: the reboot kprobe is the fd install entry here. */
         udp_capture_exit();
-        bs_hwb_exit();
+        dfm_hwb_exit();
         touch_v2_release_all();
         touch_exit();
         touch_v2_exit();
         if (g_file_inited)
-            bs_file_io_exit();
+            dfm_file_io_exit();
         if (g_mem_inited)
             mem_core_exit();
-        bs_info("stage5 module unloaded\n");
+        dfm_info("stage5 module unloaded\n");
         return;
     }
 
@@ -499,15 +499,15 @@ static void __exit mod_exit(void)
     }
     syscall_hook_exit();
     udp_capture_exit();
-    bs_hwb_exit();
+    dfm_hwb_exit();
     touch_v2_release_all();
     touch_exit();
     touch_v2_exit();
     if (g_file_inited)
-        bs_file_io_exit();
+        dfm_file_io_exit();
     if (g_mem_inited)
         mem_core_exit();
-    bs_info("module unloaded\n");
+    dfm_info("module unloaded\n");
 }
 
 module_init(mod_init);

@@ -1,5 +1,5 @@
 #define pr_fmt(fmt) fmt
-#include "bs_log.h"
+#include "dfm_log.h"
 
 #include <linux/cdev.h>
 #include <linux/cred.h>
@@ -166,13 +166,13 @@ static void touch_cache_device_caps(struct input_dev *idev)
         return;
 
     g_touch_device_caps.has_mt_slot =
-        touch_test_bit(ABS_MT_SLOT, idev->absbit);
+        touch_test_bit(ADFM_MT_SLOT, idev->absbit);
     g_touch_device_caps.has_mt_tracking_id =
-        touch_test_bit(ABS_MT_TRACKING_ID, idev->absbit);
+        touch_test_bit(ADFM_MT_TRACKING_ID, idev->absbit);
     g_touch_device_caps.has_mt_touch_major =
-        touch_test_bit(ABS_MT_TOUCH_MAJOR, idev->absbit);
+        touch_test_bit(ADFM_MT_TOUCH_MAJOR, idev->absbit);
     g_touch_device_caps.has_mt_pressure =
-        touch_test_bit(ABS_MT_PRESSURE, idev->absbit);
+        touch_test_bit(ADFM_MT_PRESSURE, idev->absbit);
     g_touch_device_caps.has_btn_touch =
         touch_test_bit(BTN_TOUCH, idev->keybit);
     g_touch_device_caps.has_btn_tool_finger =
@@ -320,7 +320,7 @@ static ssize_t touch_read_proxy_impl(struct file *file, char __user *buf,
     for (i = 0; i < num_events; ++i) {
         struct input_event *event = &g_touch_read_events[i];
 
-        if (event->type == EV_ABS && event->code == ABS_MT_SLOT) {
+        if (event->type == EV_ABS && event->code == ADFM_MT_SLOT) {
             if (event->value >= 0 && event->value < TOUCH_MAX_SLOTS)
                 current_slot = event->value;
             continue;
@@ -330,21 +330,21 @@ static ssize_t touch_read_proxy_impl(struct file *file, char __user *buf,
             continue;
 
         if (event->type == EV_ABS &&
-            (event->code == ABS_MT_TRACKING_ID ||
-             event->code == ABS_MT_POSITION_X ||
-             event->code == ABS_MT_POSITION_Y)) {
+            (event->code == ADFM_MT_TRACKING_ID ||
+             event->code == ADFM_MT_POSITION_X ||
+             event->code == ADFM_MT_POSITION_Y)) {
             g_touch_slots[current_slot].dirty = true;
 
-            if (event->code == ABS_MT_TRACKING_ID) {
+            if (event->code == ADFM_MT_TRACKING_ID) {
                 g_touch_slots[current_slot].tracking_id = event->value;
                 g_touch_slots[current_slot].active = (event->value >= 0);
                 g_touch_slots[current_slot].is_custom =
                     (event->value >= TOUCH_CUSTOM_TRACKING_BASE);
-            } else if (event->code == ABS_MT_POSITION_X) {
+            } else if (event->code == ADFM_MT_POSITION_X) {
                 g_touch_slots[current_slot].x = event->value;
                 if (!g_touch_slots[current_slot].active)
                     g_touch_slots[current_slot].active = true;
-            } else if (event->code == ABS_MT_POSITION_Y) {
+            } else if (event->code == ADFM_MT_POSITION_Y) {
                 g_touch_slots[current_slot].y = event->value;
                 if (!g_touch_slots[current_slot].active)
                     g_touch_slots[current_slot].active = true;
@@ -360,22 +360,22 @@ static ssize_t touch_read_proxy_impl(struct file *file, char __user *buf,
 
         if (g_touch_device_caps.has_mt_slot) {
             touch_append_event(&g_touch_final_events, time_template,
-                                   EV_ABS, ABS_MT_SLOT, i);
+                                   EV_ABS, ADFM_MT_SLOT, i);
         }
 
         if (g_touch_slots[i].active) {
             if (g_touch_device_caps.has_mt_tracking_id) {
                 touch_append_event(&g_touch_final_events, time_template,
-                                       EV_ABS, ABS_MT_TRACKING_ID,
+                                       EV_ABS, ADFM_MT_TRACKING_ID,
                                        g_touch_slots[i].tracking_id);
             }
             if (g_touch_device_caps.has_mt_touch_major) {
                 touch_append_event(&g_touch_final_events, time_template,
-                                       EV_ABS, ABS_MT_TOUCH_MAJOR, 2);
+                                       EV_ABS, ADFM_MT_TOUCH_MAJOR, 2);
             }
             if (g_touch_device_caps.has_mt_pressure) {
                 touch_append_event(&g_touch_final_events, time_template,
-                                       EV_ABS, ABS_MT_PRESSURE, 1);
+                                       EV_ABS, ADFM_MT_PRESSURE, 1);
             }
             if (!g_touch_first_down) {
                 if (g_touch_device_caps.has_btn_touch) {
@@ -389,21 +389,21 @@ static ssize_t touch_read_proxy_impl(struct file *file, char __user *buf,
                 g_touch_first_down = true;
             }
             touch_append_event(&g_touch_final_events, time_template,
-                                   EV_ABS, ABS_MT_POSITION_X, g_touch_slots[i].x);
+                                   EV_ABS, ADFM_MT_POSITION_X, g_touch_slots[i].x);
             touch_append_event(&g_touch_final_events, time_template,
-                                   EV_ABS, ABS_MT_POSITION_Y, g_touch_slots[i].y);
+                                   EV_ABS, ADFM_MT_POSITION_Y, g_touch_slots[i].y);
         } else {
             if (g_touch_device_caps.has_mt_touch_major) {
                 touch_append_event(&g_touch_final_events, time_template,
-                                       EV_ABS, ABS_MT_TOUCH_MAJOR, 0);
+                                       EV_ABS, ADFM_MT_TOUCH_MAJOR, 0);
             }
             if (g_touch_device_caps.has_mt_pressure) {
                 touch_append_event(&g_touch_final_events, time_template,
-                                       EV_ABS, ABS_MT_PRESSURE, 0);
+                                       EV_ABS, ADFM_MT_PRESSURE, 0);
             }
             if (g_touch_device_caps.has_mt_tracking_id) {
                 touch_append_event(&g_touch_final_events, time_template,
-                                       EV_ABS, ABS_MT_TRACKING_ID, -1);
+                                       EV_ABS, ADFM_MT_TRACKING_ID, -1);
             }
         }
 
@@ -494,7 +494,7 @@ enum {
     TOUCH_REJECT_UID        = 1,   /* uid≠1000 */
     TOUCH_REJECT_NAME       = 2,   /* dentry name lacks "event" */
     TOUCH_REJECT_PATH       = 3,   /* d_path 非 /dev/input/event */
-    TOUCH_REJECT_CAPS       = 4,   /* 缺 EV_ABS/ABS_MT_* */
+    TOUCH_REJECT_CAPS       = 4,   /* 缺 EV_ABS/ADFM_MT_* */
     TOUCH_REJECT_INSTALLED  = 5,   /* 已装, 进入去重路径 */
 };
 
@@ -523,7 +523,7 @@ static void touch_note_reject(int reason, const char *path)
 
     /* 只在真“可疑”的拒因(uid 通过后仍被过滤)上落 dmesg, 且限速. */
     if (reason == TOUCH_REJECT_CAPS)
-        bs_warn_ratelimited(
+        dfm_warn_ratelimited(
             "touch reject reason=caps uid=%u comm=%s path=%s\n",
             current_uid().val, current->comm, path ? path : "?");
 }
@@ -582,17 +582,17 @@ static int touch_try_patch_file(struct file *file)
         return 0;
 
     if (!touch_test_bit(EV_ABS, idev->evbit) ||
-        !touch_test_bit(ABS_MT_SLOT, idev->absbit) ||
-        !touch_test_bit(ABS_MT_TRACKING_ID, idev->absbit) ||
-        !touch_test_bit(ABS_MT_POSITION_X, idev->absbit) ||
-        !touch_test_bit(ABS_MT_POSITION_Y, idev->absbit)) {
+        !touch_test_bit(ADFM_MT_SLOT, idev->absbit) ||
+        !touch_test_bit(ADFM_MT_TRACKING_ID, idev->absbit) ||
+        !touch_test_bit(ADFM_MT_POSITION_X, idev->absbit) ||
+        !touch_test_bit(ADFM_MT_POSITION_Y, idev->absbit)) {
         touch_note_reject(TOUCH_REJECT_CAPS, path);
         return 0;
     }
 
     /* v3 root-fix 候选: 要求 BTN_TOUCH 或 BTN_TOOL_FINGER 位, 排除仅 4-bit
-     * ABS_MT 通过但不是真主触屏的幻影设备(部分手写笔 uinput 面板/hover
-     * 传感/次屏 backpad 会通过 ABS_MT_* 门, 但不上报 BTN_TOUCH). Linux input
+     * ADFM_MT 通过但不是真主触屏的幻影设备(部分手写笔 uinput 面板/hover
+     * 传感/次屏 backpad 会通过 ADFM_MT_* 门, 但不上报 BTN_TOUCH). Linux input
      * 协议约定实体触屏至少上 BTN_TOUCH; 此门理论上不该拒真主面板.
      *
      * 反面风险: 若某 OEM 主面板故意不上 BTN_TOUCH(极罕见, 违反 Linux input
@@ -604,7 +604,7 @@ static int touch_try_patch_file(struct file *file)
         (!touch_test_bit(BTN_TOUCH, idev->keybit) &&
          !touch_test_bit(BTN_TOOL_FINGER, idev->keybit))) {
         touch_note_reject(TOUCH_REJECT_CAPS, path);
-        bs_warn_ratelimited(
+        dfm_warn_ratelimited(
             "touch reject reason=btn_touch uid=%u comm=%s path=%s (缺 BTN_TOUCH/BTN_TOOL_FINGER, 疑幻影设备)\n",
             current_uid().val, current->comm, path);
         return 0;
@@ -618,7 +618,7 @@ static int touch_try_patch_file(struct file *file)
 
     patched = kzalloc(sizeof(*patched), GFP_ATOMIC);
     if (!patched) {
-        bs_warn_ratelimited("cannot track patched file, skip %s\n", path);
+        dfm_warn_ratelimited("cannot track patched file, skip %s\n", path);
         return -ENOMEM;
     }
 
@@ -667,14 +667,14 @@ static int touch_try_patch_file(struct file *file)
             sizeof(g_touch_status.patched_path));
     strscpy(g_touch_status.patched_comm, current->comm,
             sizeof(g_touch_status.patched_comm));
-    g_touch_status.abs_x_min = idev->absinfo
-        ? idev->absinfo[ABS_MT_POSITION_X].minimum : 0;
-    g_touch_status.abs_x_max = idev->absinfo
-        ? idev->absinfo[ABS_MT_POSITION_X].maximum : 0;
-    g_touch_status.abs_y_min = idev->absinfo
-        ? idev->absinfo[ABS_MT_POSITION_Y].minimum : 0;
-    g_touch_status.abs_y_max = idev->absinfo
-        ? idev->absinfo[ABS_MT_POSITION_Y].maximum : 0;
+    g_touch_status.adfm_x_min = idev->absinfo
+        ? idev->absinfo[ADFM_MT_POSITION_X].minimum : 0;
+    g_touch_status.adfm_x_max = idev->absinfo
+        ? idev->absinfo[ADFM_MT_POSITION_X].maximum : 0;
+    g_touch_status.adfm_y_min = idev->absinfo
+        ? idev->absinfo[ADFM_MT_POSITION_Y].minimum : 0;
+    g_touch_status.adfm_y_max = idev->absinfo
+        ? idev->absinfo[ADFM_MT_POSITION_Y].maximum : 0;
     g_touch_status.has_mt_slot = g_touch_device_caps.has_mt_slot ? 1 : 0;
     g_touch_status.has_mt_tracking_id =
         g_touch_device_caps.has_mt_tracking_id ? 1 : 0;
@@ -683,10 +683,10 @@ static int touch_try_patch_file(struct file *file)
     g_touch_status.last_reject_reason = TOUCH_REJECT_NONE;
 
     touch_stop_read_hook();
-    bs_info("touch proxy installed on %s for %s (absX=[%d,%d] absY=[%d,%d])\n",
+    dfm_info("touch proxy installed on %s for %s (absX=[%d,%d] absY=[%d,%d])\n",
             path, current->comm,
-            g_touch_status.abs_x_min, g_touch_status.abs_x_max,
-            g_touch_status.abs_y_min, g_touch_status.abs_y_max);
+            g_touch_status.adfm_x_min, g_touch_status.adfm_x_max,
+            g_touch_status.adfm_y_min, g_touch_status.adfm_y_max);
     return 0;
 }
 
@@ -824,7 +824,7 @@ static void touch_restore_all_files(void)
         if (patched->file->f_op == &g_touch_proxy_fops) {
             patched->file->f_op = patched->orig_fops;
         } else {
-            bs_warn("restore skipped: %p f_op changed by other owner\n",
+            dfm_warn("restore skipped: %p f_op changed by other owner\n",
                     patched->file);
         }
 

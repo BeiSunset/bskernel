@@ -1,5 +1,5 @@
 #define pr_fmt(fmt) fmt
-#include "bs_log.h"
+#include "dfm_log.h"
 
 #include <linux/atomic.h>
 #include <linux/errno.h>
@@ -40,7 +40,7 @@ static struct touch_v2_cached_event
     g_touch_v2_events[TOUCH_V2_MAX_EVENTS];
 static unsigned int g_touch_v2_event_count;
 static bool g_touch_v2_slot_active[TOUCH_V2_MAX_SLOTS];
-/* Index of the pending ABS_MT_POSITION_X event for a slot in the current
+/* Index of the pending ADFM_MT_POSITION_X event for a slot in the current
  * batch (or -1). Lets a second update for the same slot within one frame
  * refresh the coordinates in place instead of appending another triplet. */
 static int g_touch_v2_pos_idx[TOUCH_V2_MAX_SLOTS];
@@ -68,10 +68,10 @@ static bool touch_v2_is_touchscreen(struct input_dev *dev)
         return false;
 
     return test_bit(EV_ABS, dev->evbit) &&
-           test_bit(ABS_MT_SLOT, dev->absbit) &&
-           test_bit(ABS_MT_TRACKING_ID, dev->absbit) &&
-           test_bit(ABS_MT_POSITION_X, dev->absbit) &&
-           test_bit(ABS_MT_POSITION_Y, dev->absbit) &&
+           test_bit(ADFM_MT_SLOT, dev->absbit) &&
+           test_bit(ADFM_MT_TRACKING_ID, dev->absbit) &&
+           test_bit(ADFM_MT_POSITION_X, dev->absbit) &&
+           test_bit(ADFM_MT_POSITION_Y, dev->absbit) &&
            test_bit(EV_KEY, dev->evbit) &&
            (test_bit(BTN_TOUCH, dev->keybit) ||
             test_bit(BTN_TOOL_FINGER, dev->keybit));
@@ -99,7 +99,7 @@ static bool touch_v2_make_room_locked(unsigned int needed)
         memset(g_touch_v2_slot_active, 0,
                sizeof(g_touch_v2_slot_active));
         touch_v2_reset_pos_idx_locked();
-        bs_warn_ratelimited("event pool full; stale batch discarded\n");
+        dfm_warn_ratelimited("event pool full; stale batch discarded\n");
         return true;
     }
 
@@ -127,17 +127,17 @@ static void touch_v2_queue_down_locked(int slot, int x, int y)
 
     if (first_down) {
         (void)touch_v2_make_room_locked(8U);
-        touch_v2_append_locked(EV_ABS, ABS_MT_SLOT, slot);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TRACKING_ID,
+        touch_v2_append_locked(EV_ABS, ADFM_MT_SLOT, slot);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TRACKING_ID,
                                TOUCH_V2_TRACKING_BASE + slot);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TOOL_TYPE,
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TOOL_TYPE,
                                MT_TOOL_FINGER);
         g_touch_v2_pos_idx[slot] = (int)g_touch_v2_event_count;
-        touch_v2_append_locked(EV_ABS, ABS_MT_POSITION_X, x);
-        touch_v2_append_locked(EV_ABS, ABS_MT_POSITION_Y, y);
-        touch_v2_append_locked(EV_ABS, ABS_MT_PRESSURE, 30);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TOUCH_MINOR, 30);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_POSITION_X, x);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_POSITION_Y, y);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_PRESSURE, 30);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TOUCH_MAJOR, 30);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TOUCH_MINOR, 30);
         g_touch_v2_slot_active[slot] = true;
         return;
     }
@@ -148,8 +148,8 @@ static void touch_v2_queue_down_locked(int slot, int x, int y)
     idx = g_touch_v2_pos_idx[slot];
     if (idx >= 0 && idx + 1 < (int)g_touch_v2_event_count &&
         g_touch_v2_events[idx].type == EV_ABS &&
-        g_touch_v2_events[idx].code == ABS_MT_POSITION_X &&
-        g_touch_v2_events[idx + 1].code == ABS_MT_POSITION_Y) {
+        g_touch_v2_events[idx].code == ADFM_MT_POSITION_X &&
+        g_touch_v2_events[idx + 1].code == ADFM_MT_POSITION_Y) {
         g_touch_v2_events[idx].value = x;
         g_touch_v2_events[idx + 1].value = y;
         return;
@@ -158,25 +158,25 @@ static void touch_v2_queue_down_locked(int slot, int x, int y)
     if (touch_v2_make_room_locked(3U))
         first_down = true;
     if (first_down) {
-        touch_v2_append_locked(EV_ABS, ABS_MT_SLOT, slot);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TRACKING_ID,
+        touch_v2_append_locked(EV_ABS, ADFM_MT_SLOT, slot);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TRACKING_ID,
                                TOUCH_V2_TRACKING_BASE + slot);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TOOL_TYPE,
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TOOL_TYPE,
                                MT_TOOL_FINGER);
         g_touch_v2_pos_idx[slot] = (int)g_touch_v2_event_count;
-        touch_v2_append_locked(EV_ABS, ABS_MT_POSITION_X, x);
-        touch_v2_append_locked(EV_ABS, ABS_MT_POSITION_Y, y);
-        touch_v2_append_locked(EV_ABS, ABS_MT_PRESSURE, 30);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TOUCH_MAJOR, 30);
-        touch_v2_append_locked(EV_ABS, ABS_MT_TOUCH_MINOR, 30);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_POSITION_X, x);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_POSITION_Y, y);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_PRESSURE, 30);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TOUCH_MAJOR, 30);
+        touch_v2_append_locked(EV_ABS, ADFM_MT_TOUCH_MINOR, 30);
         g_touch_v2_slot_active[slot] = true;
         return;
     }
 
-    touch_v2_append_locked(EV_ABS, ABS_MT_SLOT, slot);
+    touch_v2_append_locked(EV_ABS, ADFM_MT_SLOT, slot);
     g_touch_v2_pos_idx[slot] = (int)g_touch_v2_event_count;
-    touch_v2_append_locked(EV_ABS, ABS_MT_POSITION_X, x);
-    touch_v2_append_locked(EV_ABS, ABS_MT_POSITION_Y, y);
+    touch_v2_append_locked(EV_ABS, ADFM_MT_POSITION_X, x);
+    touch_v2_append_locked(EV_ABS, ADFM_MT_POSITION_Y, y);
 }
 
 static void touch_v2_queue_up_locked(int slot)
@@ -185,8 +185,8 @@ static void touch_v2_queue_up_locked(int slot)
         return;
 
     (void)touch_v2_make_room_locked(2U);
-    touch_v2_append_locked(EV_ABS, ABS_MT_SLOT, slot);
-    touch_v2_append_locked(EV_ABS, ABS_MT_TRACKING_ID, -1);
+    touch_v2_append_locked(EV_ABS, ADFM_MT_SLOT, slot);
+    touch_v2_append_locked(EV_ABS, ADFM_MT_TRACKING_ID, -1);
     g_touch_v2_pos_idx[slot] = -1;
     g_touch_v2_slot_active[slot] = false;
 }
@@ -234,7 +234,7 @@ static void touch_v2_flush_workfn(struct work_struct *work)
 
         g_touch_v2_injected_batches++;
         g_touch_v2_injected_events += n;
-        bs_info_ratelimited("injected %u events (batch %lu, dev=%s, ctx=%s/%d)\n",
+        dfm_info_ratelimited("injected %u events (batch %lu, dev=%s, ctx=%s/%d)\n",
                             n, g_touch_v2_injected_batches, dev->name,
                     current->comm, current->pid);
     }
@@ -363,7 +363,7 @@ static int touch_v2_register_hooks_locked(void)
     if (!event_ret)
         g_touch_v2_input_event_registered = true;
     else
-        bs_warn("register input_event kprobe failed: %d\n", event_ret);
+        dfm_warn("register input_event kprobe failed: %d\n", event_ret);
 
     memset(&g_touch_v2_input_inject_event_kp, 0,
            sizeof(g_touch_v2_input_inject_event_kp));
@@ -374,7 +374,7 @@ static int touch_v2_register_hooks_locked(void)
     if (!inject_ret)
         g_touch_v2_input_inject_event_registered = true;
     else
-        bs_warn("register input_inject_event kprobe failed: %d\n",
+        dfm_warn("register input_inject_event kprobe failed: %d\n",
                 inject_ret);
 
     /* Real panel drivers report through input_event(), so that probe is the
@@ -389,7 +389,7 @@ static int touch_v2_register_hooks_locked(void)
         return event_ret ? event_ret : -ENOENT;
     }
 
-    bs_info("event-pool hooks ready input_event=%d input_inject_event=%d\n",
+    dfm_info("event-pool hooks ready input_event=%d input_inject_event=%d\n",
             g_touch_v2_input_event_registered ? 1 : 0,
             g_touch_v2_input_inject_event_registered ? 1 : 0);
     return 0;

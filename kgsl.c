@@ -1,5 +1,5 @@
 #define pr_fmt(fmt) fmt
-#include "bs_log.h"
+#include "dfm_log.h"
 
 #include <linux/cred.h>
 #include <linux/dcache.h>
@@ -1204,7 +1204,7 @@ static int kgsl_validate_live_idr(struct idr *idr)
 
     node = xa_to_node(head);
     if (!kgsl_xa_node_addr_ok(node)) {
-        bs_warn_ratelimited("kgsl: syncsource IDR layout mismatch (root node pointer out of range), peek disabled\n");
+        dfm_warn_ratelimited("kgsl: syncsource IDR layout mismatch (root node pointer out of range), peek disabled\n");
         ret = -EOPNOTSUPP;
         goto out_rcu;
     }
@@ -1222,7 +1222,7 @@ static int kgsl_validate_live_idr(struct idr *idr)
         count > XA_CHUNK_SIZE || nr_values > count ||
         shift >= BITS_PER_LONG || (shift % XA_CHUNK_SHIFT) != 0U ||
         !kgsl_xa_tree_ok(&idr->idr_rt, node, shift)) {
-        bs_warn_ratelimited("kgsl: syncsource IDR layout mismatch, peek disabled\n");
+        dfm_warn_ratelimited("kgsl: syncsource IDR layout mismatch, peek disabled\n");
         ret = -EOPNOTSUPP;
     }
 
@@ -1359,7 +1359,7 @@ static int kgsl_syncsource_peek_file(struct file *file, u32 min_id,
 
 long kgsl_syncsource_peek(void __user *arg)
 {
-    struct bs_kgsl_syncsource_peek_req req;
+    struct dfm_kgsl_syncsource_peek_req req;
     struct file *file;
     enum kgsl_peek_fail_stage fail_stage = KGSL_PEEK_FAIL_NONE;
     int ret;
@@ -1372,7 +1372,7 @@ long kgsl_syncsource_peek(void __user *arg)
     if (req.kgsl_fd < 0 || req.min_id == 0U ||
         req.min_id > (u32)INT_MAX || req.flags != 0U ||
         req.reserved[0] != 0U || req.reserved[1] != 0U ||
-        req.abi_version != BS_KGSL_SYNCSOURCE_PEEK_ABI_VERSION)
+        req.abi_version != DFM_KGSL_SYNCSOURCE_PEEK_ABI_VERSION)
         return -EINVAL;
     file = fget((unsigned int)req.kgsl_fd);
     if (!file)
@@ -1382,7 +1382,7 @@ long kgsl_syncsource_peek(void __user *arg)
     fput(file);
 
     if (!ret)
-        req.out_backend = BS_KGSL_SYNCSOURCE_BACKEND_IDR_RCU;
+        req.out_backend = DFM_KGSL_SYNCSOURCE_BACKEND_IDR_RCU;
     if (!ret || fail_stage != KGSL_PEEK_FAIL_NONE) {
         req.reserved[0] = (u32)fail_stage;
         if (copy_to_user(arg, &req, sizeof(req)))
@@ -1441,7 +1441,7 @@ static struct file *kgsl_target_file(int pid, u32 fd, u32 *fail_stage)
     struct fdtable *table;
     int ret;
 
-    *fail_stage = BS_KGSL_QUERY_FAIL_TASK;
+    *fail_stage = DFM_KGSL_QUERY_FAIL_TASK;
     rcu_read_lock();
     task = pid_task(find_vpid(pid), PIDTYPE_PID);
     if (task)
@@ -1458,7 +1458,7 @@ static struct file *kgsl_target_file(int pid, u32 fd, u32 *fail_stage)
     ret = mutex_lock_killable(&task->signal->cred_guard_mutex);
     if (ret)
         goto out_task;
-    *fail_stage = BS_KGSL_QUERY_FAIL_FD;
+    *fail_stage = DFM_KGSL_QUERY_FAIL_FD;
     ret = -EBADF;
     task_lock(task);
     files = task->files;
@@ -1481,13 +1481,13 @@ out_task:
     return file ? file : ERR_PTR(ret);
 }
 
-static int kgsl_query_gpuobj(struct file *file, struct bs_kgsl_query_req *req)
+static int kgsl_query_gpuobj(struct file *file, struct dfm_kgsl_query_req *req)
 {
-    struct bs_kgsl_gpuobj_info info = { .id = req->object_id };
+    struct dfm_kgsl_gpuobj_info info = { .id = req->object_id };
     struct kgsl_device_private *dev_priv;
     long result;
 
-    req->out_fail_stage = BS_KGSL_QUERY_FAIL_INFO_SYMBOL;
+    req->out_fail_stage = DFM_KGSL_QUERY_FAIL_INFO_SYMBOL;
     if (!g_kgsl_query_info)
         return -EOPNOTSUPP;
     dev_priv = READ_ONCE(file->private_data);
@@ -1502,8 +1502,8 @@ static int kgsl_query_gpuobj(struct file *file, struct bs_kgsl_query_req *req)
      * user command, user pointer, allocation/import or SET_INFO path here.
      * The file reference keeps dev_priv and its owning module alive. */
     result = g_kgsl_query_info(dev_priv,
-        _IOWR(0x09, 0x47, struct bs_kgsl_gpuobj_info), &info);
-    req->out_fail_stage = BS_KGSL_QUERY_FAIL_INFO_RESULT;
+        _IOWR(0x09, 0x47, struct dfm_kgsl_gpuobj_info), &info);
+    req->out_fail_stage = DFM_KGSL_QUERY_FAIL_INFO_RESULT;
     if (result < -MAX_ERRNO || result > 0)
         return -EPROTO;
     if (result < 0) {
@@ -1514,14 +1514,14 @@ static int kgsl_query_gpuobj(struct file *file, struct bs_kgsl_query_req *req)
         info.padding = 0;
         req->out_info = info;
     }
-    req->out_backend = BS_KGSL_QUERY_BACKEND_NATIVE_INFO;
+    req->out_backend = DFM_KGSL_QUERY_BACKEND_NATIVE_INFO;
     req->out_fail_stage = 0;
     return 0;
 }
 
 long kgsl_query(void __user *arg)
 {
-    struct bs_kgsl_query_req req;
+    struct dfm_kgsl_query_req req;
     struct file *file;
     u32 *excluded = NULL;
     u32 i;
@@ -1529,21 +1529,21 @@ long kgsl_query(void __user *arg)
     enum kgsl_peek_fail_stage stage = KGSL_PEEK_FAIL_NONE;
 
     BUILD_BUG_ON(sizeof(req) != 120U);
-    BUILD_BUG_ON(offsetof(struct bs_kgsl_query_req, out_info) != 56U);
-    BUILD_BUG_ON(sizeof(struct bs_kgsl_gpuobj_info) != 48U);
+    BUILD_BUG_ON(offsetof(struct dfm_kgsl_query_req, out_info) != 56U);
+    BUILD_BUG_ON(sizeof(struct dfm_kgsl_gpuobj_info) != 48U);
     if (copy_from_user(&req, arg, sizeof(req)))
         return -EFAULT;
-    if (req.abi_version != BS_KGSL_QUERY_ABI_VERSION || req.pid <= 0 ||
+    if (req.abi_version != DFM_KGSL_QUERY_ABI_VERSION || req.pid <= 0 ||
         req.flags || req.reserved[0] || req.reserved[1])
         return -EINVAL;
     req.out_id = req.out_backend = req.out_errno = req.out_fail_stage = 0;
     memset(&req.out_info, 0, sizeof(req.out_info));
-    if (req.op < BS_KGSL_QUERY_VALIDATE_FD ||
-        req.op > BS_KGSL_QUERY_GPUOBJ_INFO)
+    if (req.op < DFM_KGSL_QUERY_VALIDATE_FD ||
+        req.op > DFM_KGSL_QUERY_GPUOBJ_INFO)
         return -EINVAL;
-    if (req.op == BS_KGSL_QUERY_SYNCSOURCE_PEEK) {
+    if (req.op == DFM_KGSL_QUERY_SYNCSOURCE_PEEK) {
         if (req.object_id || !req.min_id || req.min_id > INT_MAX ||
-            req.excluded_count > BS_KGSL_QUERY_MAX_EXCLUDED_IDS ||
+            req.excluded_count > DFM_KGSL_QUERY_MAX_EXCLUDED_IDS ||
             (!!req.excluded_count != !!req.excluded_ids))
             return -EINVAL;
         if (req.excluded_count) {
@@ -1560,7 +1560,7 @@ long kgsl_query(void __user *arg)
             }
         }
     } else if (req.min_id || req.excluded_count || req.excluded_ids ||
-               (req.op == BS_KGSL_QUERY_VALIDATE_FD && req.object_id)) {
+               (req.op == DFM_KGSL_QUERY_VALIDATE_FD && req.object_id)) {
         return -EINVAL;
     }
 
@@ -1584,11 +1584,11 @@ long kgsl_query(void __user *arg)
     }
     req.out_fail_stage = 0;
     switch (req.op) {
-    case BS_KGSL_QUERY_VALIDATE_FD:
-        req.out_backend = BS_KGSL_QUERY_BACKEND_FILE;
+    case DFM_KGSL_QUERY_VALIDATE_FD:
+        req.out_backend = DFM_KGSL_QUERY_BACKEND_FILE;
         ret = 0;
         break;
-    case BS_KGSL_QUERY_SYNCSOURCE_PEEK:
+    case DFM_KGSL_QUERY_SYNCSOURCE_PEEK:
         ret = kgsl_syncsource_peek_file(file, req.min_id, excluded,
             req.excluded_count, &req.out_id, &stage);
         req.out_fail_stage = stage;
@@ -1598,9 +1598,9 @@ long kgsl_query(void __user *arg)
             ret = 0;
         }
         if (!ret)
-            req.out_backend = BS_KGSL_QUERY_BACKEND_IDR_RCU;
+            req.out_backend = DFM_KGSL_QUERY_BACKEND_IDR_RCU;
         break;
-    case BS_KGSL_QUERY_GPUOBJ_INFO:
+    case DFM_KGSL_QUERY_GPUOBJ_INFO:
         ret = kgsl_query_gpuobj(file, &req);
         break;
     }
@@ -1860,7 +1860,7 @@ static bool kgsl_present(void)
 
     for (i = 0; i < ARRAY_SIZE(g_kgsl_hint_symbols); i++) {
         if (kallsyms_lookup_name(g_kgsl_hint_symbols[i])) {
-            bs_info("kgsl detected via %s\n", g_kgsl_hint_symbols[i]);
+            dfm_info("kgsl detected via %s\n", g_kgsl_hint_symbols[i]);
             return true;
         }
     }
@@ -1872,32 +1872,32 @@ int kgsl_hide_init(void)
     int ret;
 
     if (!kgsl_present()) {
-        bs_info("kgsl not present; hide disabled\n");
+        dfm_info("kgsl not present; hide disabled\n");
         return 0;
     }
 
     ret = register_kprobe(&g_kp_kca);
     if (ret)
-        bs_warn("register_kprobe kobject_create_and_add failed: %d\n", ret);
+        dfm_warn("register_kprobe kobject_create_and_add failed: %d\n", ret);
     else
         g_kca_ok = true;
 
     ret = register_kprobe(&g_kp_kia);
     if (ret)
-        bs_warn("register_kprobe kobject_init_and_add failed: %d\n", ret);
+        dfm_warn("register_kprobe kobject_init_and_add failed: %d\n", ret);
     else
         g_kia_ok = true;
 
     ret = register_kprobe(&g_kp_dcd);
     if (ret)
-        bs_warn("register_kprobe debugfs_create_dir failed: %d\n", ret);
+        dfm_warn("register_kprobe debugfs_create_dir failed: %d\n", ret);
     else
         g_dcd_ok = true;
 
     if (!g_kca_ok && !g_kia_ok && !g_dcd_ok)
         return -ENOENT;
 
-    bs_info("kgsl hide armed: kca=%d kia=%d dcd=%d\n",
+    dfm_info("kgsl hide armed: kca=%d kia=%d dcd=%d\n",
             g_kca_ok, g_kia_ok, g_dcd_ok);
     return 0;
 }

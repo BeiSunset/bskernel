@@ -1,5 +1,5 @@
-#include <bs/driver.h>
-#include <bs/loader.h>
+#include <dfm/driver.h>
+#include <dfm/loader.h>
 
 #include <algorithm>
 #include <chrono>
@@ -32,30 +32,30 @@ static void usage(const char* program) {
         "--status only checks the existing BS interface; it never loads a module.\n"
         "Exit codes: 0 = ready/help, 1 = load/connection failure, 2 = usage error.\n\n"
         "Device example:\n"
-        "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader'\n"
-        "  adb shell su -c '/data/local/tmp/bskernel/bin/bs_loader --module /data/local/tmp/bs.ko'\n",
+        "  adb shell su -c '/data/local/tmp/bskernel/bin/dfm_loader'\n"
+        "  adb shell su -c '/data/local/tmp/bskernel/bin/dfm_loader --module /data/local/tmp/dfm.ko'\n",
         program, program, program, program, program, program, program, program, program);
 }
 
 static int run_touch_v2_test(int slot, int x, int y) {
-    if (!bs::init()) {
+    if (!dfm::init()) {
         std::fputs("BS interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
     std::puts("BS interface ready.");
-    if (!bs::touch_v2_init()) {
-        std::printf("touch_v2_init failed (ioctl=%ld)\n", bs::last_ioctl_result());
-        bs::close();
+    if (!dfm::touch_v2_init()) {
+        std::printf("touch_v2_init failed (ioctl=%ld)\n", dfm::last_ioctl_result());
+        dfm::close();
         return 1;
     }
     std::puts("touch_v2_init ok (deferred workqueue delivery armed).");
-    const bool down = bs::touch_v2_event(slot, x, y, true);
+    const bool down = dfm::touch_v2_event(slot, x, y, true);
     std::printf("touch_v2_event(down slot=%d x=%d y=%d) = %s\n",
                 slot, x, y, down ? "ok" : "FAILED");
     usleep(150000);
-    const bool up = bs::touch_v2_event(slot, x, y, false);
+    const bool up = dfm::touch_v2_event(slot, x, y, false);
     std::printf("touch_v2_event(up slot=%d) = %s\n", slot, up ? "ok" : "FAILED");
-    bs::close();
+    dfm::close();
     if (!down || !up) {
         std::fputs("touch-v2 ioctl failed; check: dmesg | grep touch-v2\n", stderr);
         return 1;
@@ -82,7 +82,7 @@ static int resolve_bench_pid(const char* target)
     }
     if (numeric)
         return int(std::strtol(target, nullptr, 10));
-    return bs::get_process_id(target);
+    return dfm::get_process_id(target);
 }
 
 static uint64_t pick_bench_address(int pid, size_t size)
@@ -118,7 +118,7 @@ static uint64_t pick_bench_address(int pid, size_t size)
 static bool bench_probe(int pid, uint64_t addr, size_t size,
                         std::vector<char>& buffer)
 {
-    return bs::read_memory(pid, addr, buffer.data(), size);
+    return dfm::read_memory(pid, addr, buffer.data(), size);
 }
 
 /* Walk every readable VMA from largest to smallest and shrink the request
@@ -183,7 +183,7 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
                     target ? target : "");
         return 1;
     }
-    if (!bs::init()) {
+    if (!dfm::init()) {
         std::fputs("BS interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
@@ -193,7 +193,7 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
         if (!pick_bench_range(pid, size, buffer, addr, bench_size)) {
             std::printf("no readable block in pid %d can satisfy this request; "
                         "try a smaller SIZE\n", pid);
-            bs::close();
+            dfm::close();
             return 1;
         }
         if (bench_size != size)
@@ -205,25 +205,25 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
         if (bench_size < 4096) {
             std::printf("address %#llx is not readable in pid %d\n",
                         (unsigned long long)addr, pid);
-            bs::close();
+            dfm::close();
             return 1;
         }
     }
     std::printf("target: pid=%d addr=%#llx size=%zu iters=%d\n",
                 pid, (unsigned long long)addr, bench_size, iters);
     /* One warm-up call: faults the caller buffer and the NC linearmap. */
-    if (!bs::read_memory(pid, addr, buffer.data(), bench_size)) {
+    if (!dfm::read_memory(pid, addr, buffer.data(), bench_size)) {
         std::printf("read_memory(pid=%d, addr=%#llx, size=%zu) failed (ioctl=%ld)\n",
-                    pid, (unsigned long long)addr, bench_size, bs::last_ioctl_result());
-        bs::close();
+                    pid, (unsigned long long)addr, bench_size, dfm::last_ioctl_result());
+        dfm::close();
         return 1;
     }
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < iters; ++i) {
-        if (!bs::read_memory(pid, addr, buffer.data(), bench_size)) {
+        if (!dfm::read_memory(pid, addr, buffer.data(), bench_size)) {
             std::printf("read_memory failed at iteration %d (ioctl=%ld)\n",
-                        i, bs::last_ioctl_result());
-            bs::close();
+                        i, dfm::last_ioctl_result());
+            dfm::close();
             return 1;
         }
     }
@@ -235,7 +235,7 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
                 pid, (unsigned long long)addr, bench_size, iters);
     std::printf("  per call: %.2f us   throughput: %.1f MB/s\n", per_call_us, mbps);
     std::printf("  total: %.1f ms\n", total_us / 1000.0);
-    bs::close();
+    dfm::close();
     return 0;
 }
 
@@ -284,7 +284,7 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
         std::printf("cannot resolve target '%s'\n", target ? target : "");
         return 1;
     }
-    if (!bs::init()) {
+    if (!dfm::init()) {
         std::fputs("BS interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
@@ -293,7 +293,7 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
     if (addr == 0) {
         if (!pick_bench_range(pid, size, buffer, addr, bench_size)) {
             std::printf("no readable block in pid %d can satisfy this request\n", pid);
-            bs::close();
+            dfm::close();
             return 1;
         }
         if (bench_size != size) {
@@ -303,30 +303,30 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
                 --count;
         }
     }
-    std::vector<bs::MemBatchSegment> segments(static_cast<size_t>(count));
+    std::vector<dfm::MemBatchSegment> segments(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) {
         segments[size_t(i)].addr = addr;
         segments[size_t(i)].out = buffer.data();
         segments[size_t(i)].len = uint32_t(bench_size);
     }
-    long result = bs::read_memory_batch(pid, segments.data(), uint32_t(count));
+    long result = dfm::read_memory_batch(pid, segments.data(), uint32_t(count));
     if (result != 0) {
         std::printf("read_memory_batch failed: %ld\n", result);
-        bs::close();
+        dfm::close();
         return 1;
     }
     for (int i = 0; i < count; ++i) {
         if (segments[size_t(i)].err != 0) {
             std::printf("segment %d failed: err=%d\n", i, segments[size_t(i)].err);
-            bs::close();
+            dfm::close();
             return 1;
         }
     }
     const auto start = std::chrono::steady_clock::now();
     for (int it = 0; it < iters; ++it) {
-        if (bs::read_memory_batch(pid, segments.data(), uint32_t(count)) != 0) {
+        if (dfm::read_memory_batch(pid, segments.data(), uint32_t(count)) != 0) {
             std::printf("read_memory_batch failed at iteration %d\n", it);
-            bs::close();
+            dfm::close();
             return 1;
         }
     }
@@ -341,7 +341,7 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
                 per_call_us, per_segment_us, mbps);
     std::printf("  syscalls used: %d (single-read equivalent: %d)\n",
                 iters, iters * count);
-    bs::close();
+    dfm::close();
     return 0;
 }
 
@@ -355,10 +355,10 @@ static int run_selftest(const char* target)
 
     /* 1. init/close cycles must not leak or crash. */
     for (int i = 0; i < 3; ++i) {
-        check(bs::init(), "bs::init() cycle");
-        bs::close();
+        check(dfm::init(), "dfm::init() cycle");
+        dfm::close();
     }
-    check(bs::init(), "bs::init() for memory scenarios");
+    check(dfm::init(), "dfm::init() for memory scenarios");
 
     const int self = int(getpid());
     std::vector<unsigned char> pattern(4096);
@@ -368,14 +368,14 @@ static int run_selftest(const char* target)
     /* 2. single read of our own buffer must round-trip. */
     {
         std::vector<unsigned char> out(pattern.size(), 0);
-        const bool ok = bs::read_memory(self, reinterpret_cast<uint64_t>(pattern.data()),
+        const bool ok = dfm::read_memory(self, reinterpret_cast<uint64_t>(pattern.data()),
                                         out.data(), out.size());
         check(ok && out == pattern, "single read round-trip (self)");
     }
 
     /* 3. batch read with 1/8/64 segments, bytes checked per segment. */
     for (int count : {1, 8, 64}) {
-        std::vector<bs::MemBatchSegment> segs(static_cast<size_t>(count));
+        std::vector<dfm::MemBatchSegment> segs(static_cast<size_t>(count));
         std::vector<std::vector<unsigned char>> bufs(size_t(count),
             std::vector<unsigned char>(64, 0));
         for (int i = 0; i < count; ++i) {
@@ -383,7 +383,7 @@ static int run_selftest(const char* target)
             segs[size_t(i)].out = bufs[size_t(i)].data();
             segs[size_t(i)].len = 64;
         }
-        long rc = bs::read_memory_batch(self, segs.data(), uint32_t(count));
+        long rc = dfm::read_memory_batch(self, segs.data(), uint32_t(count));
         bool ok = rc == 0;
         if (ok) {
             for (int i = 0; i < count; ++i)
@@ -400,7 +400,7 @@ static int run_selftest(const char* target)
 
     /* 4. one bad segment must not abort the batch. */
     {
-        std::vector<bs::MemBatchSegment> segs(2);
+        std::vector<dfm::MemBatchSegment> segs(2);
         std::vector<unsigned char> good(64, 0);
         std::vector<unsigned char> bad(64, 0);
         segs[0].addr = 0xdead0000ULL;
@@ -409,29 +409,29 @@ static int run_selftest(const char* target)
         segs[1].addr = reinterpret_cast<uint64_t>(pattern.data());
         segs[1].out = good.data();
         segs[1].len = 64;
-        const long rc = bs::read_memory_batch(self, segs.data(), 2);
+        const long rc = dfm::read_memory_batch(self, segs.data(), 2);
         check(rc == 0 && segs[0].err != 0 && segs[1].err == 0 && segs[1].out_len == 64,
               "bad segment isolated from good segment");
     }
 
     /* 5. argument validation must fail without touching the kernel. */
-    check(bs::read_memory_batch(self, nullptr, 1) == -EINVAL, "rejects null segments");
+    check(dfm::read_memory_batch(self, nullptr, 1) == -EINVAL, "rejects null segments");
     {
-        std::vector<bs::MemBatchSegment> segs(1);
-        check(bs::read_memory_batch(self, segs.data(), 0) == -EINVAL, "rejects count=0");
-        check(bs::read_memory_batch(self, segs.data(), 65) == -EINVAL, "rejects count>64");
+        std::vector<dfm::MemBatchSegment> segs(1);
+        check(dfm::read_memory_batch(self, segs.data(), 0) == -EINVAL, "rejects count=0");
+        check(dfm::read_memory_batch(self, segs.data(), 65) == -EINVAL, "rejects count>64");
         segs[0].addr = reinterpret_cast<uint64_t>(pattern.data());
         segs[0].out = pattern.data();
         segs[0].len = (4u * 1024u * 1024u) + 4096u;
         {
-            const long rc = bs::read_memory_batch(self, segs.data(), 1);
+            const long rc = dfm::read_memory_batch(self, segs.data(), 1);
             check(rc == -E2BIG || rc == -EINVAL, "rejects >4 MiB batch");
         }
     }
 
     /* 6. repeated batch reads must stay stable. */
     {
-        std::vector<bs::MemBatchSegment> segs(8);
+        std::vector<dfm::MemBatchSegment> segs(8);
         std::vector<std::vector<unsigned char>> bufs(8, std::vector<unsigned char>(256, 0));
         for (int i = 0; i < 8; ++i) {
             segs[size_t(i)].addr = reinterpret_cast<uint64_t>(pattern.data()) + size_t(i) * 256u;
@@ -440,12 +440,12 @@ static int run_selftest(const char* target)
         }
         bool ok = true;
         for (int it = 0; it < 2000 && ok; ++it)
-            ok = bs::read_memory_batch(self, segs.data(), 8) == 0;
+            ok = dfm::read_memory_batch(self, segs.data(), 8) == 0;
         check(ok, "2000 repeated batch reads");
     }
 
     /* 7. touch-v2 ioctl path must initialise (injection needs a real frame). */
-    check(bs::touch_v2_init(), "touch_v2_init");
+    check(dfm::touch_v2_init(), "touch_v2_init");
 
     /* 8. optional real target process: single + batch read of a mapping. */
     if (target && *target) {
@@ -458,21 +458,21 @@ static int run_selftest(const char* target)
             const bool found = pick_bench_range(pid, 4096, buffer, addr, size);
             check(found, "find readable target mapping");
             if (found) {
-                check(bs::read_memory(pid, addr, buffer.data(), size),
+                check(dfm::read_memory(pid, addr, buffer.data(), size),
                       "single read of target memory");
                 std::vector<unsigned char> out(64, 0);
-                std::vector<bs::MemBatchSegment> segs(1);
+                std::vector<dfm::MemBatchSegment> segs(1);
                 segs[0].addr = addr;
                 segs[0].out = out.data();
                 segs[0].len = 64;
-                const long rc = bs::read_memory_batch(pid, segs.data(), 1);
+                const long rc = dfm::read_memory_batch(pid, segs.data(), 1);
                 check(rc == 0 && segs[0].err == 0 && segs[0].out_len == 64,
                       "batch read of target memory");
             }
         }
     }
 
-    bs::close();
+    dfm::close();
     std::printf("selftest: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
@@ -502,7 +502,7 @@ static int count_open_fds()
 static void* stress_reader(void* arg)
 {
     StressCtx* ctx = static_cast<StressCtx*>(arg);
-    std::vector<bs::MemBatchSegment> segs(8);
+    std::vector<dfm::MemBatchSegment> segs(8);
     std::vector<std::vector<unsigned char>> bufs(8, std::vector<unsigned char>(64));
     std::vector<unsigned char> single(64);
     while (!ctx->stop) {
@@ -511,14 +511,14 @@ static void* stress_reader(void* arg)
             segs[size_t(i)].out = bufs[size_t(i)].data();
             segs[size_t(i)].len = 64;
         }
-        if (bs::read_memory_batch(ctx->pid, segs.data(), 8) != 0) {
+        if (dfm::read_memory_batch(ctx->pid, segs.data(), 8) != 0) {
             ++ctx->errors;
         } else {
             for (int i = 0; i < 8; ++i)
                 if (segs[size_t(i)].err != 0)
                     ++ctx->errors;
         }
-        if (!bs::read_memory(ctx->pid, ctx->addr, single.data(), single.size()))
+        if (!dfm::read_memory(ctx->pid, ctx->addr, single.data(), single.size()))
             ++ctx->errors;
         ++ctx->ops;
     }
@@ -582,7 +582,7 @@ static bool stress_exit_race(int* ok_reads, int* err_reads)
     int err = 0;
     int status = 0;
     for (int i = 0; i < 200000; ++i) {
-        if (bs::read_memory(int(child), uint64_t(addr), buffer.data(), buffer.size()))
+        if (dfm::read_memory(int(child), uint64_t(addr), buffer.data(), buffer.size()))
             ++ok;
         else
             ++err;
@@ -590,7 +590,7 @@ static bool stress_exit_race(int* ok_reads, int* err_reads)
             break;
     }
     waitpid(child, &status, 0);
-    if (bs::read_memory(int(child), uint64_t(addr), buffer.data(), buffer.size()))
+    if (dfm::read_memory(int(child), uint64_t(addr), buffer.data(), buffer.size()))
         ++ok;
     else
         ++err;
@@ -611,17 +611,17 @@ static int run_stress(const char* target)
     const int fds_before = count_open_fds();
     bool cycles_ok = true;
     for (int i = 0; i < 20; ++i) {
-        if (!bs::init()) {
+        if (!dfm::init()) {
             cycles_ok = false;
             break;
         }
-        bs::close();
+        dfm::close();
     }
     const int fds_after = count_open_fds();
     check(cycles_ok, "20 init/close cycles");
     check(fds_before < 0 || fds_after <= fds_before + 1, "no fd leak across cycles");
 
-    if (!bs::init()) {
+    if (!dfm::init()) {
         std::fputs("BS interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
@@ -636,7 +636,7 @@ static int run_stress(const char* target)
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     check(stable != MAP_FAILED, "stable source buffer mapped");
     if (stable == MAP_FAILED) {
-        bs::close();
+        dfm::close();
         return 1;
     }
     std::memset(stable, 0x5a, stable_len);
@@ -682,25 +682,25 @@ static int run_stress(const char* target)
             check(found, "find readable target block");
             if (found) {
                 std::vector<unsigned char> out(64, 0);
-                std::vector<bs::MemBatchSegment> segs(1);
+                std::vector<dfm::MemBatchSegment> segs(1);
                 segs[0].addr = taddr;
                 segs[0].out = out.data();
                 segs[0].len = 64;
-                check(bs::read_memory(tpid, taddr, out.data(), out.size()),
+                check(dfm::read_memory(tpid, taddr, out.data(), out.size()),
                       "single read of target memory");
-                const long rc = bs::read_memory_batch(tpid, segs.data(), 1);
+                const long rc = dfm::read_memory_batch(tpid, segs.data(), 1);
                 check(rc == 0 && segs[0].err == 0, "batch read of target memory");
             }
         }
     }
 
     /* 5. touch ioctl path still initialises with logging compiled out. */
-    check(bs::touch_v2_init(), "touch_v2_init");
+    check(dfm::touch_v2_init(), "touch_v2_init");
 
     munlock(stable, stable_len);
     munmap(stable, stable_len);
 
-    bs::close();
+    dfm::close();
     std::printf("stress: %d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
@@ -822,9 +822,9 @@ int main(int argc, char** argv) {
     if (mem_bench) return run_mem_bench(bench_target, bench_addr, bench_size, bench_iters);
     if (touch_v2_test) return run_touch_v2_test(touch_slot, touch_x, touch_y);
 
-    if (bs::init()) {
+    if (dfm::init()) {
         std::puts("Kernel interface is ready (module already loaded).");
-        bs::close();
+        dfm::close();
         return 0;
     }
     if (status_only) {
@@ -848,11 +848,11 @@ int main(int argc, char** argv) {
     }
     const bool ready = module ? loader::load_module_file(module, params)
                               : loader::load_module_from_directory(directory, params);
-    bs::close();
+    dfm::close();
     if (!ready) {
         std::fputs("BS load failed; see the error above or logcat -s bskernel.\n", stderr);
         return 1;
     }
-    std::puts("BS module loaded; subsequent applications should call bs::init().");
+    std::puts("BS module loaded; subsequent applications should call dfm::init().");
     return 0;
 }

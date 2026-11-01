@@ -1,10 +1,10 @@
-#ifndef BS_DRIVER_H
-#define BS_DRIVER_H
+#ifndef DFM_DRIVER_H
+#define DFM_DRIVER_H
 
 #include <cstdint>
 #include <cstddef>
 
-#include <bs/abi.h>
+#include <dfm/abi.h>
 
 namespace bs {
     struct PacgaExecutionInfo {
@@ -70,18 +70,18 @@ namespace bs {
      * Return 0 means completed: inspect out_errno for a guest syscall error.
      * Negative return means infrastructure failure (ENOTTY: old module).
      * No legacy caller-fd or userspace-system-call fallback. */
-    long query_kgsl(bs_kgsl_query_req& request);
+    long query_kgsl(dfm_kgsl_query_req& request);
 
     /* Direct KGSL syncsource IDR peek (legacy D,23 entry; the same feature is
-     * also reachable through query_kgsl() with BS_KGSL_QUERY_SYNCSOURCE_PEEK).
+     * also reachable through query_kgsl() with DFM_KGSL_QUERY_SYNCSOURCE_PEEK).
      * Return 0 on completion; reserved[0] carries the fail stage on failure. */
     long kgsl_syncsource_peek(int kgsl_fd, uint32_t min_id,
-                              bs_kgsl_syncsource_peek_req& out);
+                              dfm_kgsl_syncsource_peek_req& out);
 
-    bool hwb_info(bs_hwb_info_req& out);
-    bool hwb_slots(int targetTid, bs_hwb_slots_req& out);
-    bool hwb_set(int targetTid, const bs_hwb_point_req* points, size_t pointCount);
-    bool hwb_read(bs_hwb_snapshot& out);
+    bool hwb_info(dfm_hwb_info_req& out);
+    bool hwb_slots(int targetTid, dfm_hwb_slots_req& out);
+    bool hwb_set(int targetTid, const dfm_hwb_point_req* points, size_t pointCount);
+    bool hwb_read(dfm_hwb_snapshot& out);
     bool hwb_clear();
     /* Raw result of the most recent issued ioctl on this thread (negative errno).
      * Argument validation can fail before issuing an ioctl; do not rely on libc errno. */
@@ -104,7 +104,7 @@ namespace bs {
                    uint64_t offset = 0, uint64_t* out_file_size = nullptr);
     bool file_write(const char* path, const void* buf, size_t size,
                     size_t& out_size,
-                    uint32_t flags = BS_FILE_WRITE_CREATE | BS_FILE_WRITE_TRUNCATE,
+                    uint32_t flags = DFM_FILE_WRITE_CREATE | DFM_FILE_WRITE_TRUNCATE,
                     uint64_t offset = 0, uint64_t* out_file_size = nullptr);
     struct SfGroupGrantInfo {
         long ioctlResult = 0;
@@ -160,4 +160,4 @@ namespace bs {
     }
 } // namespace bs
 
-#endif /* BS_DRIVER_H */
+#endif /* DFM_DRIVER_H */

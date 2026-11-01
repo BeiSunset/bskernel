@@ -92,14 +92,14 @@ jobs:
             grep -q "name=dfm" /tmp/modinfo.txt
             grep -q "license=GPL" /tmp/modinfo.txt
             grep -q "vermagic=" /tmp/modinfo.txt
-            want_version=$(sed -n "s/^#define BS_MODULE_VERSION \"\\([^\"]*\\)\".*/\\1/p" bs_module.h)
+            want_version=$(sed -n "s/^#define DFM_MODULE_VERSION \"\\([^\"]*\\)\".*/\\1/p" dfm_module.h)
             test -n "$want_version"
             grep -q "version=${want_version}" /tmp/modinfo.txt
             grep -q "srcversion=" /tmp/modinfo.txt
             echo "--- undefined symbols (first 40) ---"
             llvm-nm -u dfm.ko | sed -n "1,40p"
             mkdir -p out
-            output="bs-${KMI}.ko"
+            output="dfm-${KMI}.ko"
             cp dfm.ko "out/$output"
             llvm-strip --strip-debug "out/$output"
             test -s "out/$output"
@@ -110,10 +110,10 @@ jobs:
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bs-kernel-${{ matrix.kmi }}
+          name: dfm-kernel-${{ matrix.kmi }}
           path: |
-            out/bs-${{ matrix.kmi }}.ko
-            out/bs-${{ matrix.kmi }}.ko.sha256
+            out/dfm-${{ matrix.kmi }}.ko
+            out/dfm-${{ matrix.kmi }}.ko.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -169,15 +169,15 @@ jobs:
       - name: Download kernel modules
         uses: actions/download-artifact@v4
         with:
-          pattern: bs-kernel-*
+          pattern: dfm-kernel-*
           merge-multiple: true
           path: modules
 
       - name: Generate embedded module table
         run: |
           set -euo pipefail
-          python3 sdk/tools/gen_embedded_modules.py sdk/tools/bs_native_modules.h modules
-          ls -l sdk/tools/bs_native_modules.h
+          python3 sdk/tools/gen_embedded_modules.py sdk/tools/dfm_native_modules.h modules
+          ls -l sdk/tools/dfm_native_modules.h
 
       - name: Fetch mbedTLS for the HTTPS version check
         run: |
@@ -201,20 +201,20 @@ jobs:
             -DBSKERNEL_USE_MBEDTLS=ON \
             -DBSKERNEL_MBEDTLS_DIR="$PWD/third_party/mbedtls" \
             -DBSKERNEL_BUILD_TOOLS=OFF -DBSKERNEL_BUILD_EXAMPLE=OFF
-          cmake --build build/native --target BSLoaderDriver --parallel "$(nproc)"
+          cmake --build build/native --target DFMLoaderDriver --parallel "$(nproc)"
           mkdir -p out
-          install -m 0755 build/native/BSLoaderDriver out/BSLoaderDriver.sh
-          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/BSLoaderDriver.sh
-          file out/BSLoaderDriver.sh || true
-          (cd out && sha256sum BSLoaderDriver.sh > BSLoaderDriver.sh.sha256)
+          install -m 0755 build/native/DFMLoaderDriver out/DFMLoaderDriver.sh
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/DFMLoaderDriver.sh
+          file out/DFMLoaderDriver.sh || true
+          (cd out && sha256sum DFMLoaderDriver.sh > DFMLoaderDriver.sh.sha256)
 
       - name: Upload native loader
         uses: actions/upload-artifact@v4
         with:
           name: bskernel-native-loader
           path: |
-            out/BSLoaderDriver.sh
-            out/BSLoaderDriver.sh.sha256
+            out/DFMLoaderDriver.sh
+            out/DFMLoaderDriver.sh.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -246,7 +246,7 @@ jobs:
       - name: Download kernel modules
         uses: actions/download-artifact@v4
         with:
-          pattern: bs-kernel-*
+          pattern: dfm-kernel-*
           merge-multiple: true
           path: out/bskernel-arm64-v8a/modules
 
@@ -255,10 +255,10 @@ jobs:
         run: |
           set -euo pipefail
           for kmi in android12-5.10 android13-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
-            (cd out/bskernel-arm64-v8a/modules && sha256sum --check "bs-$kmi.ko.sha256")
+            (cd out/bskernel-arm64-v8a/modules && sha256sum --check "dfm-$kmi.ko.sha256")
           done
           # Artifact ZIPs do not preserve executable permissions; the tarball does.
-          chmod 755 out/bskernel-arm64-v8a/bin/bs_loader out/bskernel-arm64-v8a/bin/bs_example
+          chmod 755 out/bskernel-arm64-v8a/bin/dfm_loader out/bskernel-arm64-v8a/bin/dfm_example
           tar -C out/bskernel-arm64-v8a --exclude=./modules \
             -czf out/bskernel-sdk-arm64-v8a.tar.gz .
           tar -C out -czf out/bskernel-arm64-v8a.tar.gz bskernel-arm64-v8a
@@ -292,8 +292,8 @@ jobs:
           path: |
             out/bskernel-arm64-v8a.tar.gz
             out/bskernel-arm64-v8a.tar.gz.sha256
-            out/BSLoaderDriver.sh
-            out/BSLoaderDriver.sh.sha256
+            out/DFMLoaderDriver.sh
+            out/DFMLoaderDriver.sh.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -335,8 +335,8 @@ jobs:
             out/*.tar.gz.sha256
             out/*.ko.zip
             out/*.ko.zip.sha256
-            out/BSLoaderDriver.sh
-            out/BSLoaderDriver.sh.sha256
+            out/DFMLoaderDriver.sh
+            out/DFMLoaderDriver.sh.sha256
           )
           gh release upload "$RELEASE_TAG" "${files[@]}"
 
