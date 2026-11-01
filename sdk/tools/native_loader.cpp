@@ -782,20 +782,31 @@ static const char* errno_name(int error) {
     }
 }
 
-static bool is_module_loaded() {
+static bool proc_module_present(const char* name) {
     std::FILE* file = std::fopen("/proc/modules", "r");
     if (!file)
         return false;
+    const size_t len = std::strlen(name);
     char line[256];
     bool found = false;
     while (std::fgets(line, sizeof(line), file)) {
-        if (std::strncmp(line, "bs ", 3) == 0) {
+        if (std::strncmp(line, name, len) == 0 && line[len] == ' ') {
             found = true;
             break;
         }
     }
     std::fclose(file);
     return found;
+}
+
+static bool is_module_loaded() {
+    return proc_module_present("dfm");
+}
+
+/* Versions before the rename loaded a module named "bs". Two copies would
+ * install the same kprobes/text hooks, so refuse to stack them. */
+static bool legacy_module_loaded() {
+    return proc_module_present("bs");
 }
 
 /* /sys/module/dfm/version is created from MODULE_VERSION; a foreign module that
@@ -923,6 +934,15 @@ static int load_kmi(const char* kmi, const std::string& params,
         print_supported();
         return kExitFailure;
     }
+    if (!is_module_loaded() && legacy_module_loaded()) {
+        info("检测到旧版 bs 模块，先尝试卸载...");
+        (void)syscall(__NR_delete_module, "bs", kO_NONBLOCK);
+        if (legacy_module_loaded()) {
+            err("旧版 bs 模块仍在运行，请先重启设备再加载新版本");
+            err("否则新旧两个模块会重复安装钩子，可能不稳定");
+            return kExitFailure;
+        }
+    }
     if (is_module_loaded()) {
         if (!loaded_module_is_ours()) {
             err("已存在同名但非本驱动的模块（/sys/module/dfm 版本不符）");
@@ -997,6 +1017,11 @@ static int unload_module() {
     if (result != 0) {
         const int error = errno;
         if (error == ENOENT) {
+            const long legacy = syscall(__NR_delete_module, "bs", kO_NONBLOCK);
+            if (legacy == 0) {
+                ok("旧版 bs 模块已卸载");
+                return kExitOk;
+            }
             err("内核模块未加载");
             return kExitFailure;
         }
