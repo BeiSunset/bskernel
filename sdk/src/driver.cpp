@@ -31,7 +31,7 @@ static_assert(sizeof(dfm_sf_groups_req) == 32U);
 static_assert(sizeof(mem_batch_seg) == 32U);
 static_assert(sizeof(mem_batch_req) == 32U);
 
-namespace bs {
+namespace dfm {
     static int g_fd = -1;
     static thread_local long g_last_ioctl_result = 0;
 
@@ -756,4 +756,4 @@ namespace bs {
         if (g_fd < 0) return false;
         return call_ioctl(g_fd, TOUCH_IOC_GET_STATUS, (long)out) == 0;
     }
-} // namespace bs
+} // namespace dfm

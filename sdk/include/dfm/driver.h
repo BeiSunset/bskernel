@@ -6,7 +6,7 @@
 
 #include <dfm/abi.h>
 
-namespace bs {
+namespace dfm {
     struct PacgaExecutionInfo {
         /* Raw return from the ioctl syscall: 0 means the command was handled;
          * a negative errno (notably -ENOTTY) means it never reached a usable
@@ -158,6 +158,6 @@ namespace bs {
             return T{};
         return val;
     }
-} // namespace bs
+} // namespace dfm
 
 #endif /* DFM_DRIVER_H */
