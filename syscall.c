@@ -2,7 +2,7 @@
 #include "dfm_log.h"
 
 #ifndef __aarch64__
-#error "BS kernel module requires ARM64"
+#error "dfm kernel module requires ARM64"
 #endif
 
 #include <linux/atomic.h>
@@ -254,8 +254,6 @@ int syscall_hook_init(void)
     if (!ni_syscall)
         return -ENOENT;
 
-    if (!try_module_get(THIS_MODULE))
-        return -ENODEV;
 
     for (i = 0; i < __NR_syscalls; i++) {
         if (READ_ONCE(g_sys_call_table[i]) != ni_syscall)
@@ -273,7 +271,6 @@ int syscall_hook_init(void)
         return 0;
     }
 
-    module_put(THIS_MODULE);
     return install_ret;
 }
 
@@ -305,7 +302,9 @@ void syscall_hook_exit(void)
     dfm_info("syscall install hook restored nr %d\n", g_hooked_nr);
     g_hooked_nr = -1;
     g_orig_syscall = NULL;
-    module_put(THIS_MODULE);
+    /* Drain tasks that may still be inside the patched entry: with no
+     * permanent module reference, rmmod can now proceed after exit. */
+    synchronize_rcu_tasks();
 }
 
 int syscall_hook_nr(void)

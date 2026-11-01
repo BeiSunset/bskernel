@@ -16,7 +16,7 @@
  */
 
 #ifndef __aarch64__
-#error "BS kernel module requires ARM64"
+#error "dfm kernel module requires ARM64"
 #endif
 
 #include <linux/bitmap.h>

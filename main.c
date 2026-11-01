@@ -279,7 +279,7 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
         kfree(tw);
         /* Log before dropping the pin: module text/rodata must not be touched
          * after module_put() may have released the last reference. */
-        dfm_warn("task_work_add failed\n");
+        pr_err("dfm: task_work_add failed\n");
         module_put(THIS_MODULE);
     }
 
@@ -361,16 +361,20 @@ static int __init mod_init(void)
 
 	if (dfm_stage == DFM_STAGE_SYSCALL) {
 		syscall_ret = syscall_hook_init();
-		if (syscall_ret < 0)
-			dfm_warn("syscall install hook unavailable: %d\n",
-				syscall_ret);
+		if (syscall_ret < 0) {
+			/* No fd-install entry without this hook: fail closed. */
+			pr_err("dfm: syscall install hook unavailable: %d\n",
+			       syscall_ret);
+			ret = syscall_ret;
+			goto err_file;
+		}
 		return 0;
 	}
 
 	if (dfm_stage == DFM_STAGE_REBOOT) {
 		reboot_ret = register_kprobe(&kp_reboot);
 		if (reboot_ret < 0) {
-			dfm_warn("failed to register kprobe on reboot: %d\n",
+			pr_err("dfm: failed to register kprobe on reboot: %d\n",
 				reboot_ret);
 			ret = reboot_ret;
 			goto err_file;
@@ -385,13 +389,13 @@ static int __init mod_init(void)
 	} else {
 		syscall_ret = syscall_hook_init();
 		if (syscall_ret < 0)
-			dfm_warn("syscall install hook unavailable: %d\n",
+			pr_err("dfm: syscall install hook unavailable: %d\n",
 				syscall_ret);
 	}
 
 	reboot_ret = register_kprobe(&kp_reboot);
 	if (reboot_ret < 0) {
-		dfm_warn("failed to register kprobe on reboot: %d\n",
+		pr_err("dfm: failed to register kprobe on reboot: %d\n",
 			reboot_ret);
 	} else {
 		g_reboot_kprobe_registered = 1;
@@ -403,7 +407,7 @@ static int __init mod_init(void)
 	if (dfm_stage == DFM_STAGE_NO_SYSCALL && reboot_ret < 0) {
 		syscall_ret = syscall_hook_init();
 		if (syscall_ret < 0)
-			dfm_warn("syscall fallback unavailable: %d\n",
+			pr_err("dfm: syscall fallback unavailable: %d\n",
 				syscall_ret);
 	}
 
