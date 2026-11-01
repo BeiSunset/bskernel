@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build bs.ko for ${{ matrix.kmi }}
+    name: Build dfm.ko for ${{ matrix.kmi }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -59,37 +59,37 @@ jobs:
           docker run --rm --privileged -v "$PWD:/work" -w /work -e "KMI=$KMI" "$IMAGE" bash -lc '
             set -euo pipefail
             make -j"$(nproc)" KDIR="${KERNEL_SRC:?KERNEL_SRC is not set}"
-            test -s bs.ko
-            llvm-readelf -h bs.ko | grep -q "AArch64"
-            if llvm-readelf -S bs.ko | grep -q "\.percpu"; then
+            test -s dfm.ko
+            llvm-readelf -h dfm.ko | grep -q "AArch64"
+            if llvm-readelf -S dfm.ko | grep -q "\.percpu"; then
               # Allow only kernel-generated allocation-tag counters (present when
               # CONFIG_MEM_ALLOC_PROFILING is on, e.g. the 6.12 KMI) and the
               # zero-length $d.* placeholders; any other symbol is user per-CPU
               # data, which vendor kernels (OnePlus) reject before init:
               #   "bs: Could not allocate N bytes percpu data" -> -ENOMEM.
-              llvm-readelf -S bs.ko | grep -q "\.symtab" || {
-                echo "::error::bs.ko has no .symtab; the percpu guard cannot run"
+              llvm-readelf -S dfm.ko | grep -q "\.symtab" || {
+                echo "::error::dfm.ko has no .symtab; the percpu guard cannot run"
                 exit 1
               }
-              percpu_idxs=$(llvm-readelf -S --wide bs.ko \
+              percpu_idxs=$(llvm-readelf -S --wide dfm.ko \
                 | sed -n "s/^ *\[ *\\([0-9][0-9]*\\)\\] *\\(\\.data\\.\\.percpu[^ ]*\\).*/\\1/p" \
                 | tr "\n" " ")
               if [ -z "$percpu_idxs" ]; then
                 echo "::error::a .percpu section is present but its index was not parsed"
                 exit 1
               fi
-              bad_percpu=$(llvm-readelf -s --wide bs.ko \
+              bad_percpu=$(llvm-readelf -s --wide dfm.ko \
                 | awk -v idxs="$percpu_idxs" "BEGIN{n=split(idxs,a); for(i=1;i<=n;i++) want[a[i]+0]=1} \$7 ~ /^[0-9]+\$/ && (\$7+0 in want) {print \$8}" \
                 | grep -vE "(\._alloc_tag_cntr(\$|\\.)|^\\.data\\.\\.percpu|^\\\$[dx](\\.|\$)|^$)" || true)
               if [ -n "$bad_percpu" ]; then
-                echo "::error::bs.ko has user per-CPU data (vendor kernels reject it before init):"
+                echo "::error::dfm.ko has user per-CPU data (vendor kernels reject it before init):"
                 echo "$bad_percpu"
                 echo "::error::Use kvzalloc + nr_cpu_ids CPU-indexed arrays instead."
                 exit 1
               fi
             fi
-            llvm-readelf -p .modinfo bs.ko > /tmp/modinfo.txt
-            grep -q "name=bs" /tmp/modinfo.txt
+            llvm-readelf -p .modinfo dfm.ko > /tmp/modinfo.txt
+            grep -q "name=dfm" /tmp/modinfo.txt
             grep -q "license=GPL" /tmp/modinfo.txt
             grep -q "vermagic=" /tmp/modinfo.txt
             want_version=$(sed -n "s/^#define BS_MODULE_VERSION \"\\([^\"]*\\)\".*/\\1/p" bs_module.h)
@@ -97,10 +97,10 @@ jobs:
             grep -q "version=${want_version}" /tmp/modinfo.txt
             grep -q "srcversion=" /tmp/modinfo.txt
             echo "--- undefined symbols (first 40) ---"
-            llvm-nm -u bs.ko | sed -n "1,40p"
+            llvm-nm -u dfm.ko | sed -n "1,40p"
             mkdir -p out
             output="bs-${KMI}.ko"
-            cp bs.ko "out/$output"
+            cp dfm.ko "out/$output"
             llvm-strip --strip-debug "out/$output"
             test -s "out/$output"
             cd out

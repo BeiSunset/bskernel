@@ -798,10 +798,10 @@ static bool is_module_loaded() {
     return found;
 }
 
-/* /sys/module/bs/version is created from MODULE_VERSION; a foreign module that
- * happens to be called "bs" will not carry our version string. */
+/* /sys/module/dfm/version is created from MODULE_VERSION; a foreign module that
+ * happens to be called "dfm" will not carry our version string. */
 static bool loaded_module_is_ours() {
-    std::FILE* file = std::fopen("/sys/module/bs/version", "r");
+    std::FILE* file = std::fopen("/sys/module/dfm/version", "r");
     if (!file)
         return false;
     char line[64] = {0};
@@ -819,7 +819,7 @@ static bool loaded_module_is_ours() {
  * registered, so such a module is loaded but the control interface is absent.
  * Read the parameter (root-only file) so the loader does not report success. */
 static int loaded_module_stage() {
-    std::FILE* file = std::fopen("/sys/module/bs/parameters/bs_stage", "r");
+    std::FILE* file = std::fopen("/sys/module/dfm/parameters/bs_stage", "r");
     if (!file)
         return -1;
     int stage = -1;
@@ -925,7 +925,7 @@ static int load_kmi(const char* kmi, const std::string& params,
     }
     if (is_module_loaded()) {
         if (!loaded_module_is_ours()) {
-            err("已存在同名但非本驱动的模块（/sys/module/bs 版本不符）");
+            err("已存在同名但非本驱动的模块（/sys/module/dfm 版本不符）");
             return kExitFailure;
         }
         const int stage = loaded_module_stage();
@@ -978,7 +978,7 @@ static int load_kmi(const char* kmi, const std::string& params,
                 ok("内核模块加载成功!");
                 return kExitOk;
             }
-            err("已存在同名但非本驱动的模块（/sys/module/bs 版本不符）");
+            err("已存在同名但非本驱动的模块（/sys/module/dfm 版本不符）");
             return kExitFailure;
         }
         return kExitFailure;
@@ -993,7 +993,7 @@ static int load_kmi(const char* kmi, const std::string& params,
 
 static int unload_module() {
     info("正在卸载内核模块...");
-    const long result = syscall(__NR_delete_module, "bs", kO_NONBLOCK);
+    const long result = syscall(__NR_delete_module, "dfm", kO_NONBLOCK);
     if (result != 0) {
         const int error = errno;
         if (error == ENOENT) {

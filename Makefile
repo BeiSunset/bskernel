@@ -1,4 +1,4 @@
-MODULE_NAME = bs
+MODULE_NAME = dfm
 $(MODULE_NAME)-objs := compat.o main.o mem.o process_mem.o touch.o touch_v2.o syscall.o kgsl.o bs_hwb.o udp_capture.o file_io.o sf_groups.o
 obj-m := $(MODULE_NAME).o
 

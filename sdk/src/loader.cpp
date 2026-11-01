@@ -234,8 +234,8 @@ bool load_image(std::string image, std::string_view params)
     std::string module_name, vermagic;
     ElfView elf(image);
     if (image.size() > kMaxModuleSize || !elf.parse() ||
-        !elf.modinfo("name", module_name) || module_name != "bs") {
-        LOGE("loader: expected a raw AArch64 ELF module named bs");
+        !elf.modinfo("name", module_name) || module_name != "dfm") {
+        LOGE("loader: expected a raw AArch64 ELF module named dfm");
         return false;
     }
     elf.modinfo("vermagic", vermagic);
