@@ -189,7 +189,7 @@ jobs:
           git -C third_party/mbedtls submodule update --init --depth 1
           git -C third_party/mbedtls rev-parse HEAD
 
-      - name: Build DFMLoaderDriver with the NDK
+      - name: Build BSDriverLoader with the NDK
         run: |
           set -euo pipefail
           cmake -S sdk -B build/native -G Ninja \
@@ -203,18 +203,20 @@ jobs:
             -DBSKERNEL_BUILD_TOOLS=OFF -DBSKERNEL_BUILD_EXAMPLE=OFF
           cmake --build build/native --target DFMLoaderDriver --parallel "$(nproc)"
           mkdir -p out
-          install -m 0755 build/native/DFMLoaderDriver out/DFMLoaderDriver.sh
-          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug out/DFMLoaderDriver.sh
-          file out/DFMLoaderDriver.sh || true
-          (cd out && sha256sum DFMLoaderDriver.sh > DFMLoaderDriver.sh.sha256)
+          version="$(sed -n "s/^#define DFM_MODULE_VERSION \"\\([^\"]*\\)\".*/\\1/p" dfm_module.h)"
+          test -n "$version"
+          loader="BSDriverLoader.Ver.$version"
+          install -m 0755 build/native/DFMLoaderDriver "out/$loader"
+          "$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-debug "out/$loader"
+          file "out/$loader" || true
+          (cd out && sha256sum "$loader" > "$loader.sha256")
 
       - name: Upload native loader
         uses: actions/upload-artifact@v4
         with:
           name: bskernel-native-loader
           path: |
-            out/DFMLoaderDriver.sh
-            out/DFMLoaderDriver.sh.sha256
+            out/BSDriverLoader.Ver.*
           if-no-files-found: error
           retention-days: 30
 
@@ -292,8 +294,7 @@ jobs:
           path: |
             out/bskernel-arm64-v8a.tar.gz
             out/bskernel-arm64-v8a.tar.gz.sha256
-            out/DFMLoaderDriver.sh
-            out/DFMLoaderDriver.sh.sha256
+            out/BSDriverLoader.Ver.*
           if-no-files-found: error
           retention-days: 30
 
@@ -335,8 +336,7 @@ jobs:
             out/*.tar.gz.sha256
             out/*.ko.zip
             out/*.ko.zip.sha256
-            out/DFMLoaderDriver.sh
-            out/DFMLoaderDriver.sh.sha256
+            out/BSDriverLoader.Ver.*
           )
           gh release upload "$RELEASE_TAG" "${files[@]}"
 
