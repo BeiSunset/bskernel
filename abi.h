@@ -621,7 +621,7 @@ struct dfm_sf_groups_req {
  * user 态选的 Type-B 与 kernel 实际 patch 的 event 可能是两块不同的设备.
  *
  * last_reject_reason 编码(0=无近期拒绝, 1=uid≠1000, 2=文件名非 event,
- * 3=d_path 非 /dev/input/event, 4=缺 EV_ABS/ADFM_MT_* caps, 5=已 installed
+ * 3=d_path 非 /dev/input/event, 4=缺 EV_ABS/ABS_MT_* caps, 5=已 installed
  * 后续路径进入). reject_*_count 是累计次数, 便于观察 hook 是否被高频路径
  * 反复驳回。 */
 #define UDP_CAP_MAX_PAYLOAD 2048U
