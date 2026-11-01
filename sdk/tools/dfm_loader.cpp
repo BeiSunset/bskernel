@@ -29,7 +29,7 @@ static void usage(const char* program) {
         "       %s --stress [PID|NAME]     (concurrency + exit-race stress)\n"
         "       %s --help\n\n"
         "With no path, selects a matching .ko from ../modules beside this binary.\n"
-        "--status only checks the existing BS interface; it never loads a module.\n"
+        "--status only checks the existing DFM interface; it never loads a module.\n"
         "Exit codes: 0 = ready/help, 1 = load/connection failure, 2 = usage error.\n\n"
         "Device example:\n"
         "  adb shell su -c '/data/local/tmp/bskernel/bin/dfm_loader'\n"
@@ -39,10 +39,10 @@ static void usage(const char* program) {
 
 static int run_touch_v2_test(int slot, int x, int y) {
     if (!dfm::init()) {
-        std::fputs("BS interface is unavailable; load the module first.\n", stderr);
+        std::fputs("DFM interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
-    std::puts("BS interface ready.");
+    std::puts("DFM interface ready.");
     if (!dfm::touch_v2_init()) {
         std::printf("touch_v2_init failed (ioctl=%ld)\n", dfm::last_ioctl_result());
         dfm::close();
@@ -184,7 +184,7 @@ static int run_mem_bench(const char* target, uint64_t addr, size_t size, int ite
         return 1;
     }
     if (!dfm::init()) {
-        std::fputs("BS interface is unavailable; load the module first.\n", stderr);
+        std::fputs("DFM interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
     std::vector<char> buffer(size);
@@ -285,7 +285,7 @@ static int run_mem_batch_bench(const char* target, uint64_t addr, size_t size,
         return 1;
     }
     if (!dfm::init()) {
-        std::fputs("BS interface is unavailable; load the module first.\n", stderr);
+        std::fputs("DFM interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
     std::vector<char> buffer(size);
@@ -622,7 +622,7 @@ static int run_stress(const char* target)
     check(fds_before < 0 || fds_after <= fds_before + 1, "no fd leak across cycles");
 
     if (!dfm::init()) {
-        std::fputs("BS interface is unavailable; load the module first.\n", stderr);
+        std::fputs("DFM interface is unavailable; load the module first.\n", stderr);
         return 1;
     }
 
@@ -828,7 +828,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (status_only) {
-        std::fputs("BS interface is unavailable.\n", stderr);
+        std::fputs("DFM interface is unavailable.\n", stderr);
         return 1;
     }
 
@@ -853,6 +853,6 @@ int main(int argc, char** argv) {
         std::fputs("BS load failed; see the error above or logcat -s bskernel.\n", stderr);
         return 1;
     }
-    std::puts("BS module loaded; subsequent applications should call dfm::init().");
+    std::puts("DFM module loaded; subsequent applications should call dfm::init().");
     return 0;
 }

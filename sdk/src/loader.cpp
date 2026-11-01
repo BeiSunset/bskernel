@@ -265,13 +265,13 @@ bool load_image(std::string image, std::string_view params)
     // EEXIST alone is not success: an incompatible/other module may own the name.
     for (int attempt = 0; attempt < 10; ++attempt) {
         if (dfm::init()) {
-            LOGI("loader: BS module loaded and verified");
+            LOGI("loader: DFM module loaded and verified");
             return true;
         }
         if (attempt != 9)
             usleep(100000);
     }
-    LOGE("loader: module inserted/already exists but BS interface is unavailable");
+    LOGE("loader: module inserted/already exists but DFM interface is unavailable");
     return false;
 }
 
@@ -349,7 +349,7 @@ bool load_module_file(const char* path, std::string_view params)
         }
         offset += size_t(count);
     }
-    LOGI("loader: loading BS module from %s", path);
+    LOGI("loader: loading DFM module from %s", path);
     return load_image(std::move(image), params);
 }
 

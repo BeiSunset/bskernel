@@ -12,10 +12,10 @@
   - `dfm_hwb.c` 用 `DEFINE_PER_CPU` 保存被内核占用的调试槽位（536 B）；
   - `udp_capture.c` 用 per-CPU scratch 指针（8 B）。
   - 一加 Ace 6（`6.6.118-android15-8-g93e22c376e7-abogki500782043-4k`）加载时报：
-    `bs: Could not allocate 536 bytes percpu data`
+    `dfm: Could not allocate 536 bytes percpu data`
     `finit_module` 返回 `-ENOMEM (12)`。
   - 关键点：**模块 init 根本没有执行**，dmesg 里看不到任何模块自己的 `pr_err`，只有内核装载器的这一行。
-- 替代做法：`kvzalloc(sizeof(*p) * num_possible_cpus(), GFP_KERNEL)`，
+- 替代做法：`kvzalloc(sizeof(*p) * nr_cpu_ids, GFP_KERNEL)`，
   用 `smp_processor_id()` 索引；访问点必须保证 CPU 不迁移
   （持 spinlock / 关中断，或处于 kprobe、异常上下文）。
 - 自检：构建产物不应包含**我们自己的** per-CPU 数据。CI 会检查 `.percpu` 段里的符号：
@@ -62,7 +62,7 @@
 
 ## 新设备适配流程
 
-1. `uname -a` 确认内核版本与 KMI，装对应 KMI 构建；确认 `/sys/module/bs/version`。
+1. `uname -a` 确认内核版本与 KMI，装对应 KMI 构建；确认 `/sys/module/dfm/version`。
 2. 失败时：`dmesg -C` → 重新加载 → `dmesg | tail -50`
    （不要直接 `dmesg | tail`，会被充电/相机日志淹没）。
 3. 用加载器 `--stage 1/2/3` 二分定位 init 阶段（compat / linearmap / file_io）。

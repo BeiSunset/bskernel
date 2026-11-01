@@ -66,7 +66,7 @@ jobs:
               # CONFIG_MEM_ALLOC_PROFILING is on, e.g. the 6.12 KMI) and the
               # zero-length $d.* placeholders; any other symbol is user per-CPU
               # data, which vendor kernels (OnePlus) reject before init:
-              #   "bs: Could not allocate N bytes percpu data" -> -ENOMEM.
+              #   "dfm: Could not allocate N bytes percpu data" -> -ENOMEM.
               llvm-readelf -S dfm.ko | grep -q "\.symtab" || {
                 echo "::error::dfm.ko has no .symtab; the percpu guard cannot run"
                 exit 1

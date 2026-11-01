@@ -10,7 +10,7 @@
  * such as "injected events" or "hide armed". Errors are kept because they only
  * appear when a call actually failed.
  *
- * Build with -DDFM_LOG_VERBOSE_BUILD (and load with dfm_log_verbose=1) on a test
+ * Build with -DDFM_LOG_VERBOSE_BUILD on a test
  * device when the detailed trace is needed.
  */
 #ifdef DFM_LOG_VERBOSE_BUILD

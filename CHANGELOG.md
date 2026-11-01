@@ -23,11 +23,11 @@ and the loader's `VERSION` / `CURRENT_VERSION` only describe the build.
 
 - Porting notes added in `PORTING.md`; CI now rejects any module that contains a
   per-CPU section. Vendor kernels (seen on OnePlus) refuse to load such modules
-  before init with `bs: Could not allocate N bytes percpu data` and `-ENOMEM`.
+  before init with `dfm: Could not allocate N bytes percpu data` and `-ENOMEM`.
 - Loader version check is served by the QQ share page again; the jsDelivr and
   GitHub Raw fallbacks and `version.txt` were removed.
 - Removed the unused docs/ARCHITECTURE.md; architecture notes live with the source.
-- Module logs are quiet by default; `dfm_log_verbose=1` brings the trace back.
+- Module logs are quiet by default; `-DDFM_LOG_VERBOSE_BUILD` brings the trace back.
 - rmmod panic fixed: the module no longer deletes its own sysfs kobject.
 - Memory reads use the cached linear alias for MT_NORMAL pages (2-4x on 4 MiB).
 

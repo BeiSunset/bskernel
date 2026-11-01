@@ -318,9 +318,10 @@ static void __init remove_inte_proc_entries(void)
 /* Default to 6: skip the syscall-table hook (unstable on GKI/CFI kernels)
  * and install the fd through the reboot kprobe instead. */
 static int dfm_stage = DFM_STAGE_NO_SYSCALL;
-/* Neutral parameter name: the sysfs node should not advertise the stage
- * machinery. The loader is the only writer. */
-module_param_named(dfm_stage, dfm_stage, int, 0);
+/* Readable so the loader can distinguish a stage-1/2/3 diagnostic load (no
+ * fd-install entry) from a usable module; the value is only supplied at
+ * finit_module time. */
+module_param_named(dfm_stage, dfm_stage, int, 0444);
 static bool g_mem_inited;
 static bool g_file_inited;
 

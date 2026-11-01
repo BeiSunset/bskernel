@@ -681,8 +681,8 @@ struct touch_status {
     int patched_uid;                  /* 装 proxy 时的 current_uid */
     char patched_path[64];            /* 装 proxy 时的 /dev/input/eventN */
     char patched_comm[16];            /* 装 proxy 时的 current->comm */
-    int adfm_x_min, adfm_x_max;
-    int adfm_y_min, adfm_y_max;
+    int abs_x_min, abs_x_max;
+    int abs_y_min, abs_y_max;
     int has_mt_slot;
     int has_mt_tracking_id;
     int has_btn_touch;

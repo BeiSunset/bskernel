@@ -667,13 +667,13 @@ static int touch_try_patch_file(struct file *file)
             sizeof(g_touch_status.patched_path));
     strscpy(g_touch_status.patched_comm, current->comm,
             sizeof(g_touch_status.patched_comm));
-    g_touch_status.adfm_x_min = idev->absinfo
+    g_touch_status.abs_x_min = idev->absinfo
         ? idev->absinfo[ABS_MT_POSITION_X].minimum : 0;
-    g_touch_status.adfm_x_max = idev->absinfo
+    g_touch_status.abs_x_max = idev->absinfo
         ? idev->absinfo[ABS_MT_POSITION_X].maximum : 0;
-    g_touch_status.adfm_y_min = idev->absinfo
+    g_touch_status.abs_y_min = idev->absinfo
         ? idev->absinfo[ABS_MT_POSITION_Y].minimum : 0;
-    g_touch_status.adfm_y_max = idev->absinfo
+    g_touch_status.abs_y_max = idev->absinfo
         ? idev->absinfo[ABS_MT_POSITION_Y].maximum : 0;
     g_touch_status.has_mt_slot = g_touch_device_caps.has_mt_slot ? 1 : 0;
     g_touch_status.has_mt_tracking_id =
@@ -685,8 +685,8 @@ static int touch_try_patch_file(struct file *file)
     touch_stop_read_hook();
     dfm_info("touch proxy installed on %s for %s (absX=[%d,%d] absY=[%d,%d])\n",
             path, current->comm,
-            g_touch_status.adfm_x_min, g_touch_status.adfm_x_max,
-            g_touch_status.adfm_y_min, g_touch_status.adfm_y_max);
+            g_touch_status.abs_x_min, g_touch_status.abs_x_max,
+            g_touch_status.abs_y_min, g_touch_status.abs_y_max);
     return 0;
 }
 
