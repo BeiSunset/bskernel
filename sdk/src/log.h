@@ -17,7 +17,7 @@ inline void log(int priority, const char* format, ...) {
     va_end(android_args);
     va_end(args);
 }
-} // namespace dfmkernel::detail
+} // namespace bskernel::detail
 
 #ifndef NDEBUG
 #define LOGD(...) ::bskernel::detail::log(ANDROID_LOG_DEBUG, __VA_ARGS__)
